@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DocViewer</string>
+    <string name="tagline">Read, mark up, and edit PDFs</string>
+
+    <string name="open_document">Open document</string>
+    <string name="browse_files">Browse files</string>
+    <string name="previous">Previous page</string>
+    <string name="next">Next page</string>
+    <string name="page_info">%1$d / %2$d</string>
+
+    <string name="empty_title">Nothing open yet</string>
+    <string name="empty_body">Choose a PDF from your device and it will appear here, ready to read and edit.</string>
+    <string name="untitled_document">Untitled document</string>
+    <string name="footer_note">Original app · edits are written to a new PDF</string>
+    <string name="open_error">Couldn’t open that PDF</string>
+
+    <string name="tool_view">View</string>
+    <string name="tool_pen">Pen</string>
+    <string name="tool_mark">Mark</string>
+    <string name="tool_text">Text</string>
+    <string name="tool_note">Note</string>
+    <string name="tool_sign">Sign</string>
+    <string name="tool_cover">Cover</string>
+
+    <string name="undo">Undo</string>
+    <string name="clear_marks">Clear</string>
+    <string name="save">Save</string>
+    <string name="pages">Pages</string>
+
+    <string name="add_text">Add text</string>
+    <string name="add_note">Add note</string>
+    <string name="text_hint">Type your text</string>
+    <string name="add">Add</string>
+    <string name="cancel">Cancel</string>
+
+    <string name="rotate_page">Rotate this page</string>
+    <string name="delete_page">Delete this page</string>
+    <string name="move_left">Move page earlier</string>
+    <string name="move_right">Move page later</string>
+    <string name="merge_pdf">Merge another PDF</string>
+    <string name="export_page">Export this page as PDF</string>
+    <string name="fill_forms">Fill form fields</string>
+
+    <string name="saving">Saving your PDF…</string>
+    <string name="saved">Edited PDF saved</string>
+    <string name="save_failed">Couldn’t save the PDF</string>
+    <string name="no_fields">This PDF has no fillable form fields</string>
+    <string name="page_exported">Page exported</string>
+    <string name="merge_ready">PDF added — choose Save to write the result</string>
+    <string name="nothing_to_undo">Nothing to undo</string>
+    <string name="marks_cleared">All edits cleared</string>
+</resources>

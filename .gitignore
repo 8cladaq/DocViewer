@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+local.properties
+.idea/
+*.iml
+app/build/
+build/
+captures/
+*.hprof
+.DS_Store
