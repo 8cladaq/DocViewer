@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PointF;
+import android.graphics.RectF;
 
 import com.tom_roush.pdfbox.cos.COSArray;
 import com.tom_roush.pdfbox.cos.COSBase;
@@ -116,10 +117,26 @@ public final class PdfEditor {
 
     private static void drawPath(PDPageContentStream content, Annotation a, float pageHeight)
             throws IOException {
+        boolean highlight = a.type == Annotation.Type.HIGHLIGHT;
+        if (highlight && a.rect.width() > 1f && a.rect.height() > 1f) {
+            RectF box = new RectF(a.rect);
+            box.sort();
+            PDExtendedGraphicsState state = new PDExtendedGraphicsState();
+            state.setNonStrokingAlphaConstant(0.35f);
+            content.saveGraphicsState();
+            content.setGraphicsStateParameters(state);
+            int r = Color.red(a.color);
+            int g = Color.green(a.color);
+            int b = Color.blue(a.color);
+            content.setNonStrokingColor(r, g, b);
+            content.addRect(box.left, pageHeight - box.bottom, box.width(), box.height());
+            content.fill();
+            content.restoreGraphicsState();
+            return;
+        }
         if (a.points.size() < 2) {
             return;
         }
-        boolean highlight = a.type == Annotation.Type.HIGHLIGHT;
         PDExtendedGraphicsState state = null;
         if (highlight) {
             content.saveGraphicsState();

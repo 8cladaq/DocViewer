@@ -13,21 +13,23 @@ Apache-2.0-licensed `pdfbox-android` library.
 - Page rendering with Android `PdfRenderer`
 - Immersive full-screen document view with hidden system bars
 - Single tap shows or hides the bottom tool tray; it starts hidden
+- While zoomed in, single taps are ignored so signing and viewing are undisturbed;
+  the tray toggle is enabled again after zooming back out
 - Double tap toggles zoom between fit-to-screen and 2.5x
 - Pinch in/out zooms around the gesture focus point; drag pans when zoomed
 - Animated previous/next navigation with a page indicator and disabled end states
 - Light and dark Material 3 theming
 
 ### Annotate and edit
+The edit tray contains exactly three tools:
 - **Pen** — freehand ink embedded into the output PDF
-- **Mark** — translucent highlighter strokes
-- **Text** — tap the page, type text, and it is drawn into the PDF content stream
-- **Note** — tap the page to place a PDF sticky-note annotation
-- **Sign** — freehand signature stroke
-- **Cover** — drag a rectangle; on save, covered pages are re-rendered and
-  rebuilt as image-only pages so the underlying text is actually removed
-  (true redaction, not just a black overlay)
-- Undo and clear for the current edit session
+- **Highlight** — translucent markup that snaps to detected text and renders as
+  a straight band instead of a wobbly freehand stroke
+- **Sign** — freehand signature that renders live on every move, with no wait
+  until the stroke is finished
+
+Tap the active tool again to return to view/pan mode. Undo and clear apply to the
+current edit session.
 
 ### Page tools and forms
 - Rotate, mark for deletion, and reorder the current page
@@ -45,7 +47,7 @@ goes wherever the user chooses (Downloads, Drive, etc.).
 - Illustrated empty state in an elevated card
 - Document card with rounded page preview, filename, circular navigation buttons,
   and a pill-shaped page indicator
-- Horizontal editing toolbar with toggle tools
+- Compact bottom tool tray with exactly three edit tools (Pen, Highlight, Sign)
 - Subtle fade-and-slide transition when changing pages
 
 ## Build
@@ -75,11 +77,16 @@ $adb = 'C:\Users\Naveen\AppData\Local\Android\Sdk\platform-tools\adb.exe'
 & $adb shell am instrument -w -m com.example.doclens.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The suite checks point/rectangle round-trips for all four page rotations with a
-cropped MediaBox, tap-to-select line matching, visual patching with the bundled
-font, content-stream removal of the original text operators, true redaction of
-text and annotations (including text inside Form XObjects), black-cover drawing,
-metadata sanitization, and an offline invisible OCR layer over an image-only scan.
+The suite also covers gesture behavior (double-tap zoom hides the tray, single
+tap is ignored while zoomed in and works again after zooming out), text-line
+indexing for highlight snapping, and live signature rendering before finger lift.
+
+The engine tests check point/rectangle round-trips for all four page rotations
+with a cropped MediaBox, tap-to-select line matching, visual patching with the
+bundled font, content-stream removal of the original text operators, true
+redaction of text and annotations (including text inside Form XObjects),
+black-cover drawing, metadata sanitization, and an offline invisible OCR layer
+over an image-only scan.
 
 ## Core Kotlin engine
 

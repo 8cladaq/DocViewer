@@ -217,19 +217,8 @@
                 android:id="@+id/tools_group"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                app:selectionRequired="true"
+                app:selectionRequired="false"
                 app:singleSelection="true">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_view"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_view"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/tool_pen"
@@ -243,35 +232,13 @@
                     android:textSize="12sp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_mark"
+                    android:id="@+id/tool_highlight"
                     android:layout_width="wrap_content"
                     android:layout_height="38dp"
                     android:minWidth="0dp"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
-                    android:text="@string/tool_mark"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_text"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_note"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_note"
+                    android:text="@string/tool_highlight"
                     android:textAllCaps="false"
                     android:textSize="12sp" />
 
@@ -283,17 +250,6 @@
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
                     android:text="@string/tool_sign"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_cover"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_cover"
                     android:textAllCaps="false"
                     android:textSize="12sp" />
             </com.google.android.material.button.MaterialButtonToggleGroup>

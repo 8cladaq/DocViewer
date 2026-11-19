@@ -15,13 +15,9 @@
     <string name="footer_note">Original app · edits are written to a new PDF</string>
     <string name="open_error">Couldn’t open that PDF</string>
 
-    <string name="tool_view">View</string>
     <string name="tool_pen">Pen</string>
-    <string name="tool_mark">Mark</string>
-    <string name="tool_text">Text</string>
-    <string name="tool_note">Note</string>
+    <string name="tool_highlight">Highlight</string>
     <string name="tool_sign">Sign</string>
-    <string name="tool_cover">Cover</string>
 
     <string name="undo">Undo</string>
     <string name="clear_marks">Clear</string>

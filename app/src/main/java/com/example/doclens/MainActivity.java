@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.pdf.PdfRenderer;
 import android.net.Uri;
 import android.os.Bundle;
@@ -21,9 +22,14 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
+import com.example.doclens.engine.AssetFontProvider;
+import com.example.doclens.engine.PdfTextIndex;
+import com.example.doclens.engine.PdfTextLine;
+import com.example.doclens.engine.TextPatchEngine;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
+import com.tom_roush.pdfbox.pdmodel.PDDocument;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -62,6 +68,7 @@ public class MainActivity extends AppCompatActivity {
     private final List<Annotation> annotations = new ArrayList<>();
     private final EditActions actions = new EditActions();
     private Integer pendingExportPage;
+    private volatile int textLoadGeneration;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -118,14 +125,24 @@ public class MainActivity extends AppCompatActivity {
             public void onToggleChrome() {
                 toggleTools();
             }
+
+            @Override
+            public void onZoomChanged(boolean zoomedIn) {
+                if (zoomedIn && toolsPanel.getVisibility() == View.VISIBLE) {
+                    toolsPanel.setVisibility(View.GONE);
+                    pageView.setChromeVisible(false);
+                }
+            }
         });
 
         toolsGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
             if (isChecked) {
                 pageView.setTool(toolFor(checkedId));
+            } else if (group.getCheckedButtonId() == View.NO_ID) {
+                // Tapping the active tool again returns to view/pan mode.
+                pageView.setTool(PdfPageView.Tool.NONE);
             }
         });
-        toolsGroup.check(R.id.tool_view);
 
         previousButton.setEnabled(false);
         nextButton.setEnabled(false);
@@ -133,11 +150,8 @@ public class MainActivity extends AppCompatActivity {
 
     private PdfPageView.Tool toolFor(int id) {
         if (id == R.id.tool_pen) return PdfPageView.Tool.PEN;
-        if (id == R.id.tool_mark) return PdfPageView.Tool.HIGHLIGHT;
-        if (id == R.id.tool_text) return PdfPageView.Tool.TEXT;
-        if (id == R.id.tool_note) return PdfPageView.Tool.NOTE;
+        if (id == R.id.tool_highlight) return PdfPageView.Tool.HIGHLIGHT;
         if (id == R.id.tool_sign) return PdfPageView.Tool.SIGNATURE;
-        if (id == R.id.tool_cover) return PdfPageView.Tool.REDACT;
         return PdfPageView.Tool.NONE;
     }
 
@@ -252,9 +266,48 @@ public class MainActivity extends AppCompatActivity {
         documentView.setVisibility(View.VISIBLE);
         toolsPanel.setVisibility(View.GONE);
         pageView.setChromeVisible(false);
-        toolsGroup.check(R.id.tool_view);
+        toolsGroup.clearChecked();
+        pageView.setTool(PdfPageView.Tool.NONE);
         enterFullscreen();
         renderPage(false);
+        pageView.setTextLines(new ArrayList<>());
+        loadTextLines(bytes);
+    }
+
+    private void loadTextLines(byte[] bytes) {
+        final int generation = ++textLoadGeneration;
+        new Thread(() -> {
+            List<PdfPageView.TextLineBox> lines = new ArrayList<>();
+            try (PDDocument document = PDDocument.load(bytes)) {
+                PdfTextIndex index = new TextPatchEngine(
+                        getApplicationContext(),
+                        new AssetFontProvider(getApplicationContext(),
+                                "fonts/Roboto-Regular.ttf")).extract(document);
+                for (java.util.Map.Entry<Integer, List<PdfTextLine>> entry
+                        : index.getLinesByPage().entrySet()) {
+                    float pageHeight = document.getPage(entry.getKey())
+                            .getMediaBox().getHeight();
+                    for (PdfTextLine line : entry.getValue()) {
+                        RectF bounds = line.getPdfBounds();
+                        lines.add(new PdfPageView.TextLineBox(
+                                line.getPageIndex(),
+                                bounds.left,
+                                pageHeight - bounds.top,
+                                bounds.right,
+                                pageHeight - bounds.bottom));
+                    }
+                }
+            } catch (Exception ignored) {
+                // Text-aware snapping is optional; freehand highlights still straighten.
+            }
+            if (generation == textLoadGeneration) {
+                runOnUiThread(() -> {
+                    if (generation == textLoadGeneration) {
+                        pageView.setTextLines(lines);
+                    }
+                });
+            }
+        }, "docviewer-text-index").start();
     }
 
     private void toggleTools() {
@@ -294,7 +347,8 @@ public class MainActivity extends AppCompatActivity {
         emptyState.setVisibility(View.VISIBLE);
         toolsPanel.setVisibility(View.GONE);
         pageView.setChromeVisible(false);
-        toolsGroup.check(R.id.tool_view);
+        toolsGroup.clearChecked();
+        pageView.setTool(PdfPageView.Tool.NONE);
         exitFullscreen();
     }
 
@@ -518,6 +572,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void closeDocument() {
+        textLoadGeneration++;
         if (renderer != null) {
             try {
                 renderer.close();

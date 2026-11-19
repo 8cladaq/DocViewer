@@ -14,6 +14,7 @@ import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /** Draws a PDF page and lets the user place original annotations on it. */
@@ -29,6 +30,25 @@ public class PdfPageView extends View {
         void onRedactionFinished(Annotation annotation);
 
         void onToggleChrome();
+
+        void onZoomChanged(boolean zoomedIn);
+    }
+
+    /** A text line converted to top-left page coordinates for highlight snapping. */
+    public static final class TextLineBox {
+        public final int pageIndex;
+        public final float left;
+        public final float top;
+        public final float right;
+        public final float bottom;
+
+        public TextLineBox(int pageIndex, float left, float top, float right, float bottom) {
+            this.pageIndex = pageIndex;
+            this.left = left;
+            this.top = top;
+            this.right = right;
+            this.bottom = bottom;
+        }
     }
 
     private static final float MIN_DISTANCE_POINTS = 1.5f;
@@ -44,6 +64,8 @@ public class PdfPageView extends View {
     private Listener listener;
     private Annotation active;
     private boolean chromeVisible;
+    private boolean zoomedIn;
+    private List<TextLineBox> textLines = new ArrayList<>();
 
     private float zoom = 1f;
     private float panX;
@@ -114,7 +136,9 @@ public class PdfPageView extends View {
                                     ? Annotation.Type.TEXT : Annotation.Type.NOTE;
                             listener.onBoxRequested(type, p[0], p[1]);
                         }
-                        listener.onToggleChrome();
+                        if (!zoomedIn) {
+                            listener.onToggleChrome();
+                        }
                         return true;
                     }
 
@@ -173,10 +197,20 @@ public class PdfPageView extends View {
     }
 
     public void resetView() {
+        boolean wasZoomedIn = zoomedIn;
         zoom = 1f;
+        zoomedIn = false;
         panX = 0f;
         panY = 0f;
         active = null;
+        if (wasZoomedIn && listener != null) {
+            listener.onZoomChanged(false);
+        }
+        invalidate();
+    }
+
+    public void setTextLines(List<TextLineBox> textLines) {
+        this.textLines = textLines == null ? new ArrayList<>() : textLines;
         invalidate();
     }
 
@@ -232,6 +266,13 @@ public class PdfPageView extends View {
         float bitmapX = (focusX - pageLeft()) / oldScale;
         float bitmapY = (focusY - pageTop()) / oldScale;
 
+        boolean nowZoomedIn = nextZoom > 1.01f;
+        if (nowZoomedIn != zoomedIn) {
+            zoomedIn = nowZoomedIn;
+            if (listener != null) {
+                listener.onZoomChanged(zoomedIn);
+            }
+        }
         zoom = nextZoom;
         float nextScale = drawScale();
         float centeredLeft = (getWidth() - bitmap.getWidth() * nextScale) / 2f;
@@ -269,7 +310,9 @@ public class PdfPageView extends View {
             if (a.pageIndex != currentPage) {
                 continue;
             }
-            if (a.type == Annotation.Type.PEN || a.type == Annotation.Type.HIGHLIGHT
+            if (a.type == Annotation.Type.HIGHLIGHT && hasHighlightBox(a)) {
+                drawHighlightBox(canvas, a, s);
+            } else if (a.type == Annotation.Type.PEN || a.type == Annotation.Type.HIGHLIGHT
                     || a.type == Annotation.Type.SIGNATURE) {
                 drawPath(canvas, a, s);
             } else if (a.type == Annotation.Type.TEXT) {
@@ -280,17 +323,45 @@ public class PdfPageView extends View {
                 drawRedaction(canvas, a, s);
             }
         }
+        if (active != null && active.pageIndex == currentPage) {
+            if (active.type == Annotation.Type.HIGHLIGHT && hasHighlightBox(active)) {
+                drawHighlightBox(canvas, active, s);
+            } else if (active.type != Annotation.Type.REDACT) {
+                drawPath(canvas, active, s);
+            } else {
+                drawRedaction(canvas, active, s);
+            }
+        }
         canvas.restore();
     }
 
+    private static boolean hasHighlightBox(Annotation a) {
+        return a.rect.width() > 1f && a.rect.height() > 1f;
+    }
+
+    private void drawHighlightBox(Canvas canvas, Annotation a, float s) {
+        boxPaint.setStyle(Paint.Style.FILL);
+        boxPaint.setColor(a.color);
+        boxPaint.setAlpha(95);
+        canvas.drawRect(a.rect.left * s, a.rect.top * s,
+                a.rect.right * s, a.rect.bottom * s, boxPaint);
+        boxPaint.setAlpha(255);
+    }
+
     private void drawPath(Canvas canvas, Annotation a, float s) {
-        if (a.points.size() < 2) {
+        if (a.points.isEmpty()) {
             return;
         }
         strokePaint.setColor(a.color);
         strokePaint.setStyle(Paint.Style.STROKE);
         strokePaint.setStrokeWidth(Math.max(1.5f, a.width * s));
         strokePaint.setAlpha(a.type == Annotation.Type.HIGHLIGHT ? 110 : 255);
+        if (a.points.size() == 1) {
+            PointF only = a.points.get(0);
+            canvas.drawPoint(only.x * s, only.y * s, strokePaint);
+            strokePaint.setAlpha(255);
+            return;
+        }
         Path path = new Path();
         PointF first = a.points.get(0);
         path.moveTo(first.x * s, first.y * s);
@@ -299,6 +370,7 @@ public class PdfPageView extends View {
             path.lineTo(p.x * s, p.y * s);
         }
         canvas.drawPath(path, strokePaint);
+        strokePaint.setAlpha(255);
     }
 
     private void drawText(Canvas canvas, Annotation a, float s) {
@@ -327,6 +399,59 @@ public class PdfPageView extends View {
         boxPaint.setColor(Color.BLACK);
         canvas.drawRect(a.rect.left * s, a.rect.top * s,
                 a.rect.right * s, a.rect.bottom * s, boxPaint);
+    }
+
+    private void straightenHighlight(Annotation annotation) {
+        straightenHighlight(annotation, textLines, currentPage);
+    }
+
+    /** Converts a freehand highlight into a straight band snapped to detected text. */
+    static void straightenHighlight(Annotation annotation, List<TextLineBox> lines, int page) {
+        float minX = annotation.points.get(0).x;
+        float maxX = minX;
+        float minY = annotation.points.get(0).y;
+        float maxY = minY;
+        for (PointF point : annotation.points) {
+            minX = Math.min(minX, point.x);
+            maxX = Math.max(maxX, point.x);
+            minY = Math.min(minY, point.y);
+            maxY = Math.max(maxY, point.y);
+        }
+        float centerY = (minY + maxY) / 2f;
+
+        float left = Float.POSITIVE_INFINITY;
+        float top = Float.POSITIVE_INFINITY;
+        float right = Float.NEGATIVE_INFINITY;
+        float bottom = Float.NEGATIVE_INFINITY;
+        boolean foundText = false;
+        for (TextLineBox line : lines) {
+            if (line.pageIndex != page) {
+                continue;
+            }
+            float overlap = Math.min(maxX, line.right) - Math.max(minX, line.left);
+            if (overlap <= 0f) {
+                continue;
+            }
+            float lineCenter = (line.top + line.bottom) / 2f;
+            float tolerance = Math.max(10f,
+                    Math.max((line.bottom - line.top) * 1.2f, (maxY - minY) / 2f + 4f));
+            if (Math.abs(lineCenter - centerY) > tolerance) {
+                continue;
+            }
+            foundText = true;
+            left = Math.min(left, line.left);
+            top = Math.min(top, line.top);
+            right = Math.max(right, line.right);
+            bottom = Math.max(bottom, line.bottom);
+        }
+
+        if (foundText) {
+            annotation.rect.set(left - 1.5f, top - 1f, right + 1.5f, bottom + 1f);
+        } else {
+            float halfHeight = Math.max(5f, Math.min(9f, (maxY - minY) / 2f + 2f));
+            annotation.rect.set(minX, centerY - halfHeight, maxX, centerY + halfHeight);
+        }
+        annotation.rect.sort();
     }
 
     @Override
@@ -412,6 +537,9 @@ public class PdfPageView extends View {
                             active.rect.sort();
                             listener.onRedactionFinished(active);
                         } else {
+                            if (active.type == Annotation.Type.HIGHLIGHT) {
+                                straightenHighlight(active);
+                            }
                             listener.onPathFinished(active);
                         }
                     }
