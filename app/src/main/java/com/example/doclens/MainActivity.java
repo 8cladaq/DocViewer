@@ -17,6 +17,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
@@ -43,7 +46,9 @@ public class MainActivity extends AppCompatActivity {
     private TextView pageLabel;
     private TextView fileName;
     private View emptyState;
+    private View landingView;
     private View documentView;
+    private View toolsPanel;
 
     private PdfRenderer renderer;
     private ParcelFileDescriptor fileDescriptor;
@@ -77,7 +82,9 @@ public class MainActivity extends AppCompatActivity {
         fileName = findViewById(R.id.file_name);
         pageView = findViewById(R.id.page_image);
         emptyState = findViewById(R.id.empty_state);
+        landingView = findViewById(R.id.landing_view);
         documentView = findViewById(R.id.document_view);
+        toolsPanel = findViewById(R.id.tools_panel);
 
         openButton.setOnClickListener(v -> openDocument());
         browseButton.setOnClickListener(v -> openDocument());
@@ -105,6 +112,11 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(MainActivity.this,
                         "Cover applied — save to remove the content underneath",
                         Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onToggleChrome() {
+                toggleTools();
             }
         });
 
@@ -235,9 +247,64 @@ public class MainActivity extends AppCompatActivity {
         pageCount = renderer.getPageCount();
         pageIndex = 0;
         fileName.setText(name);
+        landingView.setVisibility(View.GONE);
         emptyState.setVisibility(View.GONE);
         documentView.setVisibility(View.VISIBLE);
+        toolsPanel.setVisibility(View.GONE);
+        pageView.setChromeVisible(false);
+        toolsGroup.check(R.id.tool_view);
+        enterFullscreen();
         renderPage(false);
+    }
+
+    private void toggleTools() {
+        if (documentView.getVisibility() != View.VISIBLE) {
+            return;
+        }
+        boolean show = toolsPanel.getVisibility() != View.VISIBLE;
+        toolsPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        pageView.setChromeVisible(show);
+    }
+
+    private void enterFullscreen() {
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (controller != null) {
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+            controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().hide();
+        }
+    }
+
+    private void exitFullscreen() {
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (controller != null) {
+            controller.show(WindowInsetsCompat.Type.systemBars());
+        }
+    }
+
+    private void closeDocumentView() {
+        closeDocument();
+        documentView.setVisibility(View.GONE);
+        landingView.setVisibility(View.VISIBLE);
+        emptyState.setVisibility(View.VISIBLE);
+        toolsPanel.setVisibility(View.GONE);
+        pageView.setChromeVisible(false);
+        toolsGroup.check(R.id.tool_view);
+        exitFullscreen();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (documentView.getVisibility() == View.VISIBLE) {
+            closeDocumentView();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private void movePage(int delta) {

@@ -11,6 +11,10 @@ Apache-2.0-licensed `pdfbox-android` library.
 ### Read
 - System `ACTION_OPEN_DOCUMENT` picker — no storage permission required
 - Page rendering with Android `PdfRenderer`
+- Immersive full-screen document view with hidden system bars
+- Single tap shows or hides the bottom tool tray; it starts hidden
+- Double tap toggles zoom between fit-to-screen and 2.5x
+- Pinch in/out zooms around the gesture focus point; drag pans when zoomed
 - Animated previous/next navigation with a page indicator and disabled end states
 - Light and dark Material 3 theming
 

@@ -9,7 +9,9 @@ import android.graphics.Path;
 import android.graphics.PointF;
 import android.graphics.RectF;
 import android.util.AttributeSet;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 
 import java.util.List;
@@ -25,9 +27,13 @@ public class PdfPageView extends View {
         void onBoxRequested(Annotation.Type type, float pdfX, float pdfY);
 
         void onRedactionFinished(Annotation annotation);
+
+        void onToggleChrome();
     }
 
     private static final float MIN_DISTANCE_POINTS = 1.5f;
+    private static final float MAX_ZOOM = 5f;
+    private static final float DOUBLE_TAP_ZOOM = 2.5f;
 
     private Bitmap bitmap;
     private float pdfWidth;
@@ -37,11 +43,18 @@ public class PdfPageView extends View {
     private Tool tool = Tool.NONE;
     private Listener listener;
     private Annotation active;
+    private boolean chromeVisible;
+
+    private float zoom = 1f;
+    private float panX;
+    private float panY;
 
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint boxPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private ScaleGestureDetector scaleDetector;
+    private GestureDetector gestureDetector;
 
     public PdfPageView(Context context) {
         super(context);
@@ -59,6 +72,77 @@ public class PdfPageView extends View {
         strokePaint.setStrokeJoin(Paint.Join.ROUND);
         textPaint.setStyle(Paint.Style.FILL);
         textPaint.setColor(Color.rgb(30, 41, 59));
+        setClickable(true);
+
+        scaleDetector = new ScaleGestureDetector(getContext(),
+                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    @Override
+                    public boolean onScaleBegin(ScaleGestureDetector detector) {
+                        active = null;
+                        getParent().requestDisallowInterceptTouchEvent(true);
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onScale(ScaleGestureDetector detector) {
+                        setZoom(zoom * detector.getScaleFactor(),
+                                detector.getFocusX(), detector.getFocusY());
+                        return true;
+                    }
+
+                    @Override
+                    public void onScaleEnd(ScaleGestureDetector detector) {
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                    }
+                });
+
+        gestureDetector = new GestureDetector(getContext(),
+                new GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public boolean onDown(MotionEvent e) {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onSingleTapConfirmed(MotionEvent e) {
+                        if (listener == null || bitmap == null) {
+                            return true;
+                        }
+                        if (chromeVisible && (tool == Tool.TEXT || tool == Tool.NOTE)) {
+                            float[] p = viewToPdf(e.getX(), e.getY());
+                            Annotation.Type type = tool == Tool.TEXT
+                                    ? Annotation.Type.TEXT : Annotation.Type.NOTE;
+                            listener.onBoxRequested(type, p[0], p[1]);
+                        }
+                        listener.onToggleChrome();
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onDoubleTap(MotionEvent e) {
+                        active = null;
+                        if (zoom > 1.01f) {
+                            setZoom(1f, getWidth() / 2f, getHeight() / 2f);
+                        } else {
+                            setZoom(DOUBLE_TAP_ZOOM, e.getX(), e.getY());
+                        }
+                        invalidate();
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onScroll(MotionEvent e1, MotionEvent e2,
+                                            float distanceX, float distanceY) {
+                        if (tool != Tool.NONE || scaleDetector.isInProgress()) {
+                            return false;
+                        }
+                        panX -= distanceX;
+                        panY -= distanceY;
+                        clampPan();
+                        invalidate();
+                        return true;
+                    }
+                });
     }
 
     public void setListener(Listener listener) {
@@ -71,13 +155,27 @@ public class PdfPageView extends View {
         invalidate();
     }
 
+    public void setChromeVisible(boolean chromeVisible) {
+        this.chromeVisible = chromeVisible;
+    }
+
     public void setPage(Bitmap bitmap, float pdfWidth, float pdfHeight,
                         List<Annotation> annotations, int currentPage) {
+        if (this.bitmap != null && this.bitmap != bitmap) {
+            this.bitmap.recycle();
+        }
         this.bitmap = bitmap;
         this.pdfWidth = pdfWidth;
         this.pdfHeight = pdfHeight;
         this.annotations = annotations;
         this.currentPage = currentPage;
+        resetView();
+    }
+
+    public void resetView() {
+        zoom = 1f;
+        panX = 0f;
+        panY = 0f;
         active = null;
         invalidate();
     }
@@ -89,27 +187,67 @@ public class PdfPageView extends View {
         return bitmap.getWidth() / pdfWidth;
     }
 
-    private float drawScale() {
-        if (bitmap == null || bitmap.getWidth() == 0 || bitmap.getHeight() == 0) {
+    private float baseDrawScale() {
+        if (bitmap == null || bitmap.getWidth() == 0 || bitmap.getHeight() == 0
+                || getWidth() <= 0 || getHeight() <= 0) {
             return 1f;
         }
         return Math.min((float) getWidth() / bitmap.getWidth(),
                 (float) getHeight() / bitmap.getHeight());
     }
 
-    private float originX() {
-        return (getWidth() - bitmap.getWidth() * drawScale()) / 2f;
+    private float drawScale() {
+        return baseDrawScale() * zoom;
     }
 
-    private float originY() {
-        return (getHeight() - bitmap.getHeight() * drawScale()) / 2f;
+    private float pageWidth() {
+        return bitmap == null ? 0f : bitmap.getWidth() * drawScale();
+    }
+
+    private float pageHeight() {
+        return bitmap == null ? 0f : bitmap.getHeight() * drawScale();
+    }
+
+    private float pageLeft() {
+        return (getWidth() - pageWidth()) / 2f + panX;
+    }
+
+    private float pageTop() {
+        return (getHeight() - pageHeight()) / 2f + panY;
+    }
+
+    private void clampPan() {
+        float halfOverflowX = Math.max(0f, (pageWidth() - getWidth()) / 2f);
+        float halfOverflowY = Math.max(0f, (pageHeight() - getHeight()) / 2f);
+        panX = Math.max(-halfOverflowX, Math.min(halfOverflowX, panX));
+        panY = Math.max(-halfOverflowY, Math.min(halfOverflowY, panY));
+    }
+
+    private void setZoom(float targetZoom, float focusX, float focusY) {
+        if (bitmap == null) {
+            return;
+        }
+        float nextZoom = Math.max(1f, Math.min(MAX_ZOOM, targetZoom));
+        float oldScale = drawScale();
+        float bitmapX = (focusX - pageLeft()) / oldScale;
+        float bitmapY = (focusY - pageTop()) / oldScale;
+
+        zoom = nextZoom;
+        float nextScale = drawScale();
+        float centeredLeft = (getWidth() - bitmap.getWidth() * nextScale) / 2f;
+        float centeredTop = (getHeight() - bitmap.getHeight() * nextScale) / 2f;
+        panX = focusX - centeredLeft - bitmapX * nextScale;
+        panY = focusY - centeredTop - bitmapY * nextScale;
+        clampPan();
+        invalidate();
     }
 
     private float[] viewToPdf(float x, float y) {
-        float scale = drawScale();
-        float bx = (x - originX()) / scale / renderScale();
-        float by = (y - originY()) / scale / renderScale();
-        return new float[]{bx, by};
+        float scale = drawScale() * renderScale();
+        if (scale <= 0f) {
+            scale = 1f;
+        }
+        return new float[]{(x - pageLeft()) / scale, (y - pageTop()) / scale};
     }
 
     @Override
@@ -120,13 +258,13 @@ public class PdfPageView extends View {
         }
         float ds = drawScale();
         canvas.drawBitmap(bitmap, null,
-                new RectF(originX(), originY(),
-                        originX() + bitmap.getWidth() * ds,
-                        originY() + bitmap.getHeight() * ds), bitmapPaint);
+                new RectF(pageLeft(), pageTop(),
+                        pageLeft() + bitmap.getWidth() * ds,
+                        pageTop() + bitmap.getHeight() * ds), bitmapPaint);
 
         float s = ds * renderScale();
         canvas.save();
-        canvas.translate(originX(), originY());
+        canvas.translate(pageLeft(), pageTop());
         for (Annotation a : annotations) {
             if (a.pageIndex != currentPage) {
                 continue;
@@ -193,20 +331,34 @@ public class PdfPageView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (tool == Tool.NONE || bitmap == null || listener == null) {
-            return false;
+        if (bitmap == null) {
+            return super.onTouchEvent(event);
         }
-        float[] p = viewToPdf(event.getX(), event.getY());
 
-        switch (event.getActionMasked()) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            getParent().requestDisallowInterceptTouchEvent(true);
+        }
+
+        scaleDetector.onTouchEvent(event);
+        gestureDetector.onTouchEvent(event);
+
+        if (scaleDetector.isInProgress() || event.getPointerCount() > 1) {
+            active = null;
+            return true;
+        }
+
+        if (tool == Tool.NONE || listener == null
+                || tool == Tool.TEXT || tool == Tool.NOTE) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                getParent().requestDisallowInterceptTouchEvent(false);
+            }
+            return true;
+        }
+
+        float[] p = viewToPdf(event.getX(), event.getY());
+        switch (action) {
             case MotionEvent.ACTION_DOWN:
-                getParent().requestDisallowInterceptTouchEvent(true);
-                if (tool == Tool.TEXT || tool == Tool.NOTE) {
-                    Annotation.Type type = tool == Tool.TEXT
-                            ? Annotation.Type.TEXT : Annotation.Type.NOTE;
-                    listener.onBoxRequested(type, p[0], p[1]);
-                    return true;
-                }
                 if (tool == Tool.REDACT) {
                     active = Annotation.redaction(currentPage,
                             new RectF(p[0], p[1], p[0], p[1]));
@@ -255,7 +407,7 @@ public class PdfPageView extends View {
                     boolean valid = active.type == Annotation.Type.REDACT
                             ? Math.abs(active.rect.width()) > 4 && Math.abs(active.rect.height()) > 4
                             : active.points.size() > 1;
-                    if (valid && event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    if (valid && action == MotionEvent.ACTION_UP) {
                         if (active.type == Annotation.Type.REDACT) {
                             active.rect.sort();
                             listener.onRedactionFinished(active);
