@@ -170,6 +170,30 @@ class ContinuousScrollTest {
     }
 
     @Test
+    fun zoomedPageFlingPansHorizontally() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { openDocument(it) }
+            Thread.sleep(700)
+
+            val afterDrag = FloatArray(1)
+            scenario.onActivity { activity ->
+                val view: PdfPageView = activity.findViewById(R.id.page_image)
+                zoomTo(view, 2.5f)
+                drag(view, 650f, 450f, 1200f)
+                afterDrag[0] = field(view, "panX") as Float
+            }
+            Thread.sleep(900)
+
+            scenario.onActivity { activity ->
+                val view: PdfPageView = activity.findViewById(R.id.page_image)
+                val afterFling = field(view, "panX") as Float
+                assertTrue("fling must continue horizontal pan: ${afterDrag[0]} -> $afterFling",
+                    afterFling < afterDrag[0] - 50f)
+            }
+        }
+    }
+
+    @Test
     fun undoAndRedoRestoreAnnotationHistory() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { openDocument(it) }

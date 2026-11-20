@@ -138,6 +138,12 @@ public class PdfPageView extends View {
     private float zoom = 1f;
     private float scrollY;
     private float panX;
+    private float lastTouchX;
+    private float lastTouchY;
+    private boolean panning;
+    private float lastPinchFocusX;
+    private float lastPinchFocusY;
+    private boolean pinchTracking;
 
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -182,7 +188,11 @@ public class PdfPageView extends View {
                     @Override
                     public boolean onScaleBegin(ScaleGestureDetector detector) {
                         active = null;
+                        panning = false;
                         scroller.forceFinished(true);
+                        lastPinchFocusX = detector.getFocusX();
+                        lastPinchFocusY = detector.getFocusY();
+                        pinchTracking = true;
                         getParent().requestDisallowInterceptTouchEvent(true);
                         return true;
                     }
@@ -191,11 +201,14 @@ public class PdfPageView extends View {
                     public boolean onScale(ScaleGestureDetector detector) {
                         setZoom(zoom * detector.getScaleFactor(),
                                 detector.getFocusX(), detector.getFocusY());
+                        lastPinchFocusX = detector.getFocusX();
+                        lastPinchFocusY = detector.getFocusY();
                         return true;
                     }
 
                     @Override
                     public void onScaleEnd(ScaleGestureDetector detector) {
+                        pinchTracking = false;
                         getParent().requestDisallowInterceptTouchEvent(false);
                     }
                 });
@@ -253,38 +266,6 @@ public class PdfPageView extends View {
                         beginSelection(e.getX(), e.getY());
                     }
 
-                    @Override
-                    public boolean onScroll(MotionEvent e1, MotionEvent e2,
-                                            float distanceX, float distanceY) {
-                        if (selectionMode || tool != Tool.NONE || scaleDetector.isInProgress()) {
-                            return false;
-                        }
-                        scroller.forceFinished(true);
-                        panX -= distanceX;
-                        scrollY += distanceY;
-                        clampPan();
-                        clampScroll();
-                        invalidate();
-                        return true;
-                    }
-
-                    @Override
-                    public boolean onFling(MotionEvent e1, MotionEvent e2,
-                                           float velocityX, float velocityY) {
-                        if (selectionMode || tool != Tool.NONE || scaleDetector.isInProgress()) {
-                            return false;
-                        }
-                        float panLimit = Math.max(0f,
-                                (pageWidth() * zoom - getWidth()) / 2f);
-                        float scrollLimit = Math.max(0f,
-                                contentHeight() - getHeight() / Math.max(0.01f, zoom));
-                        scroller.fling(Math.round(panX), Math.round(scrollY),
-                                Math.round(velocityX), Math.round(-velocityY),
-                                Math.round(-panLimit), Math.round(panLimit),
-                                0, Math.round(scrollLimit));
-                        invalidate();
-                        return true;
-                    }
                 });
     }
 
@@ -906,6 +887,7 @@ public class PdfPageView extends View {
         }
 
         int action = event.getActionMasked();
+        boolean singlePointer = event.getPointerCount() == 1;
         if (action == MotionEvent.ACTION_DOWN) {
             getParent().requestDisallowInterceptTouchEvent(true);
             scroller.forceFinished(true);
@@ -914,6 +896,11 @@ public class PdfPageView extends View {
             } else {
                 velocityTracker.clear();
             }
+            lastTouchX = event.getX();
+            lastTouchY = event.getY();
+            panning = singlePointer && !selectionMode && !scaleDetector.isInProgress()
+                    && (tool == Tool.NONE || tool == Tool.TEXT || tool == Tool.NOTE)
+                    && listener != null;
         }
         if (velocityTracker != null && action != MotionEvent.ACTION_UP
                 && action != MotionEvent.ACTION_CANCEL) {
@@ -925,6 +912,25 @@ public class PdfPageView extends View {
 
         if (scaleDetector.isInProgress() || event.getPointerCount() > 1) {
             active = null;
+            panning = false;
+            if (pinchTracking && action == MotionEvent.ACTION_MOVE
+                    && event.getPointerCount() > 1) {
+                float focusX = 0f;
+                float focusY = 0f;
+                for (int i = 0; i < event.getPointerCount(); i++) {
+                    focusX += event.getX(i);
+                    focusY += event.getY(i);
+                }
+                focusX /= event.getPointerCount();
+                focusY /= event.getPointerCount();
+                panX += focusX - lastPinchFocusX;
+                scrollY -= (focusY - lastPinchFocusY) / Math.max(0.01f, zoom);
+                lastPinchFocusX = focusX;
+                lastPinchFocusY = focusY;
+                clampPan();
+                clampScroll();
+                invalidate();
+            }
             return true;
         }
 
@@ -938,23 +944,48 @@ public class PdfPageView extends View {
                 invalidate();
             }
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                getParent().requestDisallowInterceptTouchEvent(false);
-                if (velocityTracker != null) {
-                    velocityTracker.recycle();
-                    velocityTracker = null;
-                }
+                endTouch();
             }
+            return true;
+        }
+
+        if (panning && singlePointer && action == MotionEvent.ACTION_MOVE) {
+            float dx = event.getX() - lastTouchX;
+            float dy = event.getY() - lastTouchY;
+            lastTouchX = event.getX();
+            lastTouchY = event.getY();
+            panX += dx;
+            scrollY -= dy / Math.max(0.01f, zoom);
+            clampPan();
+            clampScroll();
+            invalidate();
+            return true;
+        }
+
+        if (panning && (action == MotionEvent.ACTION_UP
+                || action == MotionEvent.ACTION_CANCEL)) {
+            if (action == MotionEvent.ACTION_UP && velocityTracker != null) {
+                velocityTracker.computeCurrentVelocity(1000);
+                float panLimit = Math.max(0f,
+                        (pageWidth() * zoom - getWidth()) / 2f);
+                float scrollLimit = Math.max(0f,
+                        contentHeight() - getHeight() / Math.max(0.01f, zoom));
+                scroller.fling(Math.round(panX), Math.round(scrollY),
+                        Math.round(velocityTracker.getXVelocity()),
+                        Math.round(-velocityTracker.getYVelocity()
+                                / Math.max(0.01f, zoom)),
+                        Math.round(-panLimit), Math.round(panLimit),
+                        0, Math.round(scrollLimit));
+                invalidate();
+            }
+            endTouch();
             return true;
         }
 
         if (tool == Tool.NONE || listener == null
                 || tool == Tool.TEXT || tool == Tool.NOTE) {
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                getParent().requestDisallowInterceptTouchEvent(false);
-                if (velocityTracker != null) {
-                    velocityTracker.recycle();
-                    velocityTracker = null;
-                }
+                endTouch();
             }
             return true;
         }
@@ -1026,16 +1057,22 @@ public class PdfPageView extends View {
                     active = null;
                     invalidate();
                 }
-                getParent().requestDisallowInterceptTouchEvent(false);
-                if (velocityTracker != null) {
-                    velocityTracker.recycle();
-                    velocityTracker = null;
-                }
+                endTouch();
                 break;
 
             default:
                 break;
         }
         return true;
+    }
+
+    private void endTouch() {
+        getParent().requestDisallowInterceptTouchEvent(false);
+        panning = false;
+        pinchTracking = false;
+        if (velocityTracker != null) {
+            velocityTracker.recycle();
+            velocityTracker = null;
+        }
     }
 }
