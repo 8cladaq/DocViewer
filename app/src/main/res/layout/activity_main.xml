@@ -168,12 +168,12 @@
         </ScrollView>
     </LinearLayout>
 
-    <!-- Full-screen document -->
+    <!-- Full-screen continuous-scroll document -->
     <FrameLayout
         android:id="@+id/document_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#111827"
+        android:background="#0F172A"
         android:visibility="gone">
 
         <TextView
@@ -189,166 +189,243 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:contentDescription="@string/untitled_document" />
+
+        <!-- Top action bar: title row plus a centered row of document actions -->
+        <LinearLayout
+            android:id="@+id/top_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:background="@drawable/top_bar_background"
+            android:orientation="vertical"
+            android:paddingStart="12dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/back_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:contentDescription="@string/close_document"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="20dp"
+                    app:icon="@drawable/ic_arrow_back"
+                    app:iconTint="#FFFFFF" />
+
+                <TextView
+                    android:id="@+id/doc_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="@string/untitled_document"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/page_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/top_pill_background"
+                    android:paddingStart="14dp"
+                    android:paddingTop="7dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="7dp"
+                    android:text="@string/page_info"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/save_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:contentDescription="@string/save"
+                    app:backgroundTint="@color/primary"
+                    app:cornerRadius="22dp"
+                    app:icon="@drawable/ic_save"
+                    app:iconTint="#FFFFFF" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="46dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/previous_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/previous"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp"
+                    app:icon="@drawable/ic_chevron_left"
+                    app:iconTint="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/next_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/next"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp"
+                    app:icon="@drawable/ic_chevron_right"
+                    app:iconTint="#FFFFFF" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="#44FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/undo_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/undo"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp"
+                    app:icon="@drawable/ic_undo"
+                    app:iconTint="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/redo_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/redo"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp"
+                    app:icon="@drawable/ic_redo"
+                    app:iconTint="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/clear_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/clear_marks"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp"
+                    app:icon="@drawable/ic_clear"
+                    app:iconTint="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/pages_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/pages"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp"
+                    app:icon="@drawable/ic_file"
+                    app:iconTint="#FFFFFF" />
+            </LinearLayout>
+        </LinearLayout>
     </FrameLayout>
 
-    <!-- Bottom tool tray: hidden until a single tap on the page -->
-    <LinearLayout
+    <!-- Centered bottom tool tray: hidden until a single tap on the page -->
+    <FrameLayout
         android:id="@+id/tools_panel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="@drawable/tools_panel_background"
         android:clickable="true"
         android:elevation="12dp"
         android:focusable="true"
-        android:orientation="vertical"
-        android:paddingStart="12dp"
-        android:paddingTop="10dp"
-        android:paddingEnd="12dp"
-        android:paddingBottom="12dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="28dp"
         android:visibility="gone">
 
-        <HorizontalScrollView
-            android:layout_width="match_parent"
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/tools_group"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:scrollbars="none">
-
-            <com.google.android.material.button.MaterialButtonToggleGroup
-                android:id="@+id/tools_group"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                app:selectionRequired="false"
-                app:singleSelection="true">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_pen"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_pen"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_highlight"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_highlight"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/tool_sign"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/tool_sign"
-                    android:textAllCaps="false"
-                    android:textSize="12sp" />
-            </com.google.android.material.button.MaterialButtonToggleGroup>
-        </HorizontalScrollView>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="end"
-            android:orientation="horizontal">
+            android:layout_gravity="center"
+            android:background="@drawable/tool_tray_background"
+            android:padding="8dp"
+            app:selectionRequired="false"
+            app:singleSelection="true">
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/undo_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:id="@+id/tool_pen"
+                android:layout_width="92dp"
+                android:layout_height="66dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
                 android:minWidth="0dp"
-                android:text="@string/undo"
+                android:text="@string/tool_pen"
                 android:textAllCaps="false"
-                android:textSize="12sp" />
+                android:textColor="@color/tool_content_tint"
+                android:textSize="11sp"
+                app:backgroundTint="@color/tool_tint"
+                app:cornerRadius="20dp"
+                app:icon="@drawable/ic_pen"
+                app:iconGravity="textTop"
+                app:iconPadding="2dp"
+                app:iconSize="22dp"
+                app:iconTint="@color/tool_content_tint" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/clear_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:id="@+id/tool_highlight"
+                android:layout_width="92dp"
+                android:layout_height="66dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
                 android:minWidth="0dp"
-                android:text="@string/clear_marks"
+                android:text="@string/tool_highlight"
                 android:textAllCaps="false"
-                android:textSize="12sp" />
+                android:textColor="@color/tool_content_tint"
+                android:textSize="11sp"
+                app:backgroundTint="@color/tool_tint"
+                app:cornerRadius="20dp"
+                app:icon="@drawable/ic_highlight"
+                app:iconGravity="textTop"
+                app:iconPadding="2dp"
+                app:iconSize="22dp"
+                app:iconTint="@color/tool_content_tint" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/pages_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:id="@+id/tool_sign"
+                android:layout_width="92dp"
+                android:layout_height="66dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
                 android:minWidth="0dp"
-                android:text="@string/pages"
+                android:text="@string/tool_sign"
                 android:textAllCaps="false"
-                android:textSize="12sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/save_button"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginStart="4dp"
-                android:minWidth="0dp"
-                android:text="@string/save"
-                android:textAllCaps="false"
-                android:textSize="12sp"
-                app:cornerRadius="19dp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:gravity="center"
-            android:orientation="horizontal">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/previous_button"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:contentDescription="@string/previous"
-                app:backgroundTint="@color/primary"
-                app:cornerRadius="24dp"
-                app:icon="@drawable/ic_chevron_left"
-                app:iconTint="@android:color/white" />
-
-            <TextView
-                android:id="@+id/page_label"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:layout_marginEnd="12dp"
-                android:background="@drawable/pill_background"
-                android:paddingStart="20dp"
-                android:paddingTop="9dp"
-                android:paddingEnd="20dp"
-                android:paddingBottom="9dp"
-                android:text="@string/page_info"
-                android:textColor="@color/primary"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/next_button"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:contentDescription="@string/next"
-                app:backgroundTint="@color/primary"
-                app:cornerRadius="24dp"
-                app:icon="@drawable/ic_chevron_right"
-                app:iconTint="@android:color/white" />
-        </LinearLayout>
-    </LinearLayout>
+                android:textColor="@color/tool_content_tint"
+                android:textSize="11sp"
+                app:backgroundTint="@color/tool_tint"
+                app:cornerRadius="20dp"
+                app:icon="@drawable/ic_sign"
+                app:iconGravity="textTop"
+                app:iconPadding="2dp"
+                app:iconSize="22dp"
+                app:iconTint="@color/tool_content_tint" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+    </FrameLayout>
 
 </FrameLayout>

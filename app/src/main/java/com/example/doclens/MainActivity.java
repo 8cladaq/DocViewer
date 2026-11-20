@@ -36,8 +36,14 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** DocViewer — original PDF reading and editing, built on Android SDK + PDFBox-Android. */
 public class MainActivity extends AppCompatActivity {
@@ -50,10 +56,18 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButtonToggleGroup toolsGroup;
     private PdfPageView pageView;
     private TextView pageLabel;
+    private TextView docTitle;
     private TextView fileName;
+    private MaterialButton previousButton;
+    private MaterialButton nextButton;
+    private MaterialButton undoButton;
+    private MaterialButton redoButton;
+    private MaterialButton clearButton;
+    private MaterialButton saveButton;
     private View emptyState;
     private View landingView;
     private View documentView;
+    private View topBar;
     private View toolsPanel;
 
     private PdfRenderer renderer;
@@ -64,8 +78,17 @@ public class MainActivity extends AppCompatActivity {
     private int pageCount;
     private float pdfWidth;
     private float pdfHeight;
+    private int bitmapWidth;
+    private int bitmapHeight;
+
+    private final Object rendererLock = new Object();
+    private final Set<Integer> pendingPages = new HashSet<>();
+    private ExecutorService renderExecutor;
+    private volatile int renderGeneration;
 
     private final List<Annotation> annotations = new ArrayList<>();
+    private final Deque<List<Annotation>> undoStack = new ArrayDeque<>();
+    private final Deque<List<Annotation>> redoStack = new ArrayDeque<>();
     private final EditActions actions = new EditActions();
     private Integer pendingExportPage;
     private volatile int textLoadGeneration;
@@ -78,44 +101,68 @@ public class MainActivity extends AppCompatActivity {
 
         MaterialButton openButton = findViewById(R.id.open_button);
         MaterialButton browseButton = findViewById(R.id.browse_button);
-        MaterialButton previousButton = findViewById(R.id.previous_button);
-        MaterialButton nextButton = findViewById(R.id.next_button);
-        MaterialButton undoButton = findViewById(R.id.undo_button);
-        MaterialButton clearButton = findViewById(R.id.clear_button);
+        MaterialButton backButton = findViewById(R.id.back_button);
         MaterialButton pagesButton = findViewById(R.id.pages_button);
-        MaterialButton saveButton = findViewById(R.id.save_button);
+        previousButton = findViewById(R.id.previous_button);
+        nextButton = findViewById(R.id.next_button);
+        undoButton = findViewById(R.id.undo_button);
+        redoButton = findViewById(R.id.redo_button);
+        clearButton = findViewById(R.id.clear_button);
+        saveButton = findViewById(R.id.save_button);
         toolsGroup = findViewById(R.id.tools_group);
         pageLabel = findViewById(R.id.page_label);
+        docTitle = findViewById(R.id.doc_title);
         fileName = findViewById(R.id.file_name);
         pageView = findViewById(R.id.page_image);
         emptyState = findViewById(R.id.empty_state);
         landingView = findViewById(R.id.landing_view);
         documentView = findViewById(R.id.document_view);
+        topBar = findViewById(R.id.top_bar);
         toolsPanel = findViewById(R.id.tools_panel);
 
         openButton.setOnClickListener(v -> openDocument());
         browseButton.setOnClickListener(v -> openDocument());
+        backButton.setOnClickListener(v -> closeDocumentView());
         previousButton.setOnClickListener(v -> movePage(-1));
         nextButton.setOnClickListener(v -> movePage(1));
         undoButton.setOnClickListener(v -> undo());
+        redoButton.setOnClickListener(v -> redo());
         clearButton.setOnClickListener(v -> clearEdits());
         pagesButton.setOnClickListener(v -> showPagesDialog());
         saveButton.setOnClickListener(v -> openSavePicker());
 
-        pageView.setListener(new PdfPageView.Listener() {
+        pageView.setPageSource(new PdfPageView.PageSource() {
             @Override
-            public void onPathFinished(Annotation annotation) {
-                annotations.add(annotation);
+            public int pageCount() {
+                return pageCount;
             }
 
             @Override
-            public void onBoxRequested(Annotation.Type type, float pdfX, float pdfY) {
-                showTextDialog(type, pdfX, pdfY);
+            public List<Annotation> annotations() {
+                return annotations;
+            }
+
+            @Override
+            public void requestPage(int index) {
+                requestPageBitmap(index);
+            }
+        });
+
+        pageView.setListener(new PdfPageView.Listener() {
+            @Override
+            public void onPathFinished(Annotation annotation) {
+                addAnnotation(annotation);
+            }
+
+            @Override
+            public void onBoxRequested(Annotation.Type type, int page,
+                                       float pdfX, float pdfY) {
+                showTextDialog(type, page, pdfX, pdfY);
             }
 
             @Override
             public void onRedactionFinished(Annotation annotation) {
-                annotations.add(annotation);
+                addAnnotation(annotation);
                 Toast.makeText(MainActivity.this,
                         "Cover applied — save to remove the content underneath",
                         Toast.LENGTH_SHORT).show();
@@ -129,9 +176,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onZoomChanged(boolean zoomedIn) {
                 if (zoomedIn && toolsPanel.getVisibility() == View.VISIBLE) {
-                    toolsPanel.setVisibility(View.GONE);
-                    pageView.setChromeVisible(false);
+                    hideChrome();
                 }
+            }
+
+            @Override
+            public void onPageChanged(int page) {
+                pageIndex = page;
+                updatePageControls();
             }
         });
 
@@ -144,8 +196,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        previousButton.setEnabled(false);
-        nextButton.setEnabled(false);
+        updateActionStates();
     }
 
     private PdfPageView.Tool toolFor(int id) {
@@ -257,21 +308,106 @@ public class MainActivity extends AppCompatActivity {
             out.write(bytes);
         }
         fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
-        renderer = new PdfRenderer(fileDescriptor);
-        pageCount = renderer.getPageCount();
+
+        synchronized (rendererLock) {
+            renderer = new PdfRenderer(fileDescriptor);
+            pageCount = renderer.getPageCount();
+            if (pageCount == 0) {
+                throw new IllegalStateException("The PDF has no pages");
+            }
+            PdfRenderer.Page first = renderer.openPage(0);
+            try {
+                pdfWidth = first.getWidth();
+                pdfHeight = first.getHeight();
+            } finally {
+                first.close();
+            }
+        }
+        float textureScale = Math.min(1f,
+                (float) MAX_TEXTURE_DIMENSION / Math.max(pdfWidth, pdfHeight));
+        bitmapWidth = Math.max(1, Math.round(pdfWidth * textureScale));
+        bitmapHeight = Math.max(1, Math.round(pdfHeight * textureScale));
+
+        renderGeneration++;
+        renderExecutor = Executors.newSingleThreadExecutor(runnable ->
+                new Thread(runnable, "docviewer-page-render"));
+        pendingPages.clear();
         pageIndex = 0;
+
         fileName.setText(name);
+        docTitle.setText(name);
         landingView.setVisibility(View.GONE);
         emptyState.setVisibility(View.GONE);
         documentView.setVisibility(View.VISIBLE);
-        toolsPanel.setVisibility(View.GONE);
-        pageView.setChromeVisible(false);
+        hideChrome();
         toolsGroup.clearChecked();
         pageView.setTool(PdfPageView.Tool.NONE);
+        resetHistory();
+        updateActionStates();
         enterFullscreen();
-        renderPage(false);
+
+        pageView.setDocument(pageCount, pdfWidth, pdfHeight,
+                bitmapWidth, bitmapHeight, annotations);
+        pageLabel.setText(getString(R.string.page_info, pageIndex + 1, pageCount));
+        updatePageControls();
+        requestPageBitmap(0);
         pageView.setTextLines(new ArrayList<>());
         loadTextLines(bytes);
+    }
+
+    /** Decodes one page off the UI thread; PdfRenderer is kept on a single serial executor. */
+    private void requestPageBitmap(int index) {
+        ExecutorService executor = renderExecutor;
+        if (executor == null || renderer == null || index < 0 || index >= pageCount) {
+            return;
+        }
+        synchronized (pendingPages) {
+            if (!pendingPages.add(index)) {
+                return;
+            }
+        }
+        final int generation = renderGeneration;
+        executor.execute(() -> {
+            Bitmap bitmap = null;
+            try {
+                synchronized (rendererLock) {
+                    if (generation != renderGeneration || renderer == null) {
+                        return;
+                    }
+                    PdfRenderer.Page page = renderer.openPage(index);
+                    try {
+                        bitmap = Bitmap.createBitmap(
+                                bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888);
+                        bitmap.eraseColor(Color.WHITE);
+                        Matrix matrix = new Matrix();
+                        matrix.setScale((float) bitmapWidth / page.getWidth(),
+                                (float) bitmapHeight / page.getHeight());
+                        page.render(bitmap, null, matrix,
+                                PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                    } finally {
+                        page.close();
+                    }
+                }
+            } catch (Exception ignored) {
+                if (bitmap != null && !bitmap.isRecycled()) {
+                    bitmap.recycle();
+                }
+                bitmap = null;
+            }
+            final Bitmap decoded = bitmap;
+            runOnUiThread(() -> {
+                synchronized (pendingPages) {
+                    pendingPages.remove(index);
+                }
+                if (generation != renderGeneration || decoded == null || decoded.isRecycled()) {
+                    if (decoded != null && !decoded.isRecycled()) {
+                        decoded.recycle();
+                    }
+                    return;
+                }
+                pageView.setPageBitmap(index, decoded);
+            });
+        });
     }
 
     private void loadTextLines(byte[] bytes) {
@@ -315,8 +451,15 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         boolean show = toolsPanel.getVisibility() != View.VISIBLE;
+        topBar.setVisibility(show ? View.VISIBLE : View.GONE);
         toolsPanel.setVisibility(show ? View.VISIBLE : View.GONE);
         pageView.setChromeVisible(show);
+    }
+
+    private void hideChrome() {
+        topBar.setVisibility(View.GONE);
+        toolsPanel.setVisibility(View.GONE);
+        pageView.setChromeVisible(false);
     }
 
     private void enterFullscreen() {
@@ -345,8 +488,7 @@ public class MainActivity extends AppCompatActivity {
         documentView.setVisibility(View.GONE);
         landingView.setVisibility(View.VISIBLE);
         emptyState.setVisibility(View.VISIBLE);
-        toolsPanel.setVisibility(View.GONE);
-        pageView.setChromeVisible(false);
+        hideChrome();
         toolsGroup.clearChecked();
         pageView.setTool(PdfPageView.Tool.NONE);
         exitFullscreen();
@@ -366,53 +508,80 @@ public class MainActivity extends AppCompatActivity {
         if (renderer == null || target < 0 || target >= pageCount) {
             return;
         }
-        pageIndex = target;
-        renderPage(true);
+        pageView.scrollToPage(target);
     }
 
-    private void renderPage(boolean animate) {
-        if (renderer == null || pageCount == 0) {
-            return;
-        }
-        PdfRenderer.Page page = renderer.openPage(pageIndex);
-        pdfWidth = page.getWidth();
-        pdfHeight = page.getHeight();
-        float scale = Math.min(1f,
-                (float) MAX_TEXTURE_DIMENSION / Math.max(pdfWidth, pdfHeight));
-        int width = Math.max(1, Math.round(pdfWidth * scale));
-        int height = Math.max(1, Math.round(pdfHeight * scale));
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        bitmap.eraseColor(Color.WHITE);
-        Matrix transform = new Matrix();
-        transform.setScale(scale, scale);
-        page.render(bitmap, null, transform, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
-        page.close();
-
-        pageView.setPage(bitmap, pdfWidth, pdfHeight, annotations, pageIndex);
-        if (animate) {
-            pageView.startAnimation(AnimationUtils.loadAnimation(this, R.anim.page_in));
-        }
+    private void updatePageControls() {
         pageLabel.setText(getString(R.string.page_info, pageIndex + 1, pageCount));
-        findViewById(R.id.previous_button).setEnabled(pageIndex > 0);
-        findViewById(R.id.next_button).setEnabled(pageIndex < pageCount - 1);
+        previousButton.setEnabled(pageCount > 1 && pageIndex > 0);
+        nextButton.setEnabled(pageCount > 1 && pageIndex < pageCount - 1);
     }
 
-    private void undo() {
-        if (annotations.isEmpty()) {
-            Toast.makeText(this, R.string.nothing_to_undo, Toast.LENGTH_SHORT).show();
-            return;
-        }
-        annotations.remove(annotations.size() - 1);
+    private void addAnnotation(Annotation annotation) {
+        undoStack.push(copyAnnotations());
+        redoStack.clear();
+        annotations.add(annotation);
+        updateActionStates();
         pageView.invalidate();
     }
 
-    private void clearEdits() {
+    private List<Annotation> copyAnnotations() {
+        return new ArrayList<>(annotations);
+    }
+
+    private void restoreAnnotations(List<Annotation> state) {
         annotations.clear();
+        annotations.addAll(state);
+        pageView.invalidate();
+        updateActionStates();
+    }
+
+    private void undo() {
+        if (undoStack.isEmpty()) {
+            Toast.makeText(this, R.string.nothing_to_undo, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        redoStack.push(copyAnnotations());
+        restoreAnnotations(undoStack.pop());
+    }
+
+    private void redo() {
+        if (redoStack.isEmpty()) {
+            Toast.makeText(this, R.string.nothing_to_redo, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        undoStack.push(copyAnnotations());
+        restoreAnnotations(redoStack.pop());
+    }
+
+    private void clearEdits() {
+        if (annotations.isEmpty()) {
+            Toast.makeText(this, R.string.nothing_to_clear, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        undoStack.push(copyAnnotations());
+        redoStack.clear();
+        annotations.clear();
+        updateActionStates();
         pageView.invalidate();
         Toast.makeText(this, R.string.marks_cleared, Toast.LENGTH_SHORT).show();
     }
 
-    private void showTextDialog(Annotation.Type type, float pdfX, float pdfY) {
+    private void resetHistory() {
+        undoStack.clear();
+        redoStack.clear();
+    }
+
+    private void updateActionStates() {
+        boolean hasDocument = sourceBytes != null;
+        undoButton.setEnabled(hasDocument && !undoStack.isEmpty());
+        redoButton.setEnabled(hasDocument && !redoStack.isEmpty());
+        clearButton.setEnabled(hasDocument && !annotations.isEmpty());
+        saveButton.setEnabled(hasDocument);
+        updatePageControls();
+    }
+
+    private void showTextDialog(Annotation.Type type, int page, float pdfX, float pdfY) {
         View view = getLayoutInflater().inflate(R.layout.dialog_text, null);
         TextView title = view.findViewById(R.id.dialog_title);
         EditText input = view.findViewById(R.id.dialog_input);
@@ -428,10 +597,9 @@ public class MainActivity extends AppCompatActivity {
                     if (value.isEmpty()) {
                         return;
                     }
-                    annotations.add(isNote
-                            ? Annotation.note(pageIndex, pdfX, pdfY, value)
-                            : Annotation.text(pageIndex, pdfX, pdfY, value));
-                    pageView.invalidate();
+                    addAnnotation(isNote
+                            ? Annotation.note(page, pdfX, pdfY, value)
+                            : Annotation.text(page, pdfX, pdfY, value));
                 })
                 .setNegativeButton(R.string.cancel, null)
                 .show();
@@ -573,24 +741,47 @@ public class MainActivity extends AppCompatActivity {
 
     private void closeDocument() {
         textLoadGeneration++;
-        if (renderer != null) {
-            try {
-                renderer.close();
-            } catch (Exception ignored) {
-                // Best-effort cleanup.
-            }
-            renderer = null;
+        renderGeneration++;
+        ExecutorService executor = renderExecutor;
+        renderExecutor = null;
+        if (executor != null) {
+            executor.shutdownNow();
         }
-        if (fileDescriptor != null) {
-            try {
-                fileDescriptor.close();
-            } catch (Exception ignored) {
-                // Best-effort cleanup.
+
+        synchronized (rendererLock) {
+            if (renderer != null) {
+                try {
+                    renderer.close();
+                } catch (Exception ignored) {
+                    // Best-effort cleanup.
+                }
+                renderer = null;
             }
-            fileDescriptor = null;
+            if (fileDescriptor != null) {
+                try {
+                    fileDescriptor.close();
+                } catch (Exception ignored) {
+                    // Best-effort cleanup.
+                }
+                fileDescriptor = null;
+            }
         }
+
+        synchronized (pendingPages) {
+            pendingPages.clear();
+        }
+        pageView.clear();
+        annotations.clear();
+        actions.clear();
+        resetHistory();
         sourceBytes = null;
+        currentName = null;
         pageCount = 0;
         pageIndex = 0;
+        pdfWidth = 1f;
+        pdfHeight = 1f;
+        bitmapWidth = 1;
+        bitmapHeight = 1;
+        updateActionStates();
     }
 }

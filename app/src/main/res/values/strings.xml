@@ -20,6 +20,9 @@
     <string name="tool_sign">Sign</string>
 
     <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="close_document">Close document</string>
+    <string name="nothing_to_redo">Nothing to redo</string>
     <string name="clear_marks">Clear</string>
     <string name="save">Save</string>
     <string name="pages">Pages</string>
@@ -45,5 +48,6 @@
     <string name="page_exported">Page exported</string>
     <string name="merge_ready">PDF added — choose Save to write the result</string>
     <string name="nothing_to_undo">Nothing to undo</string>
+    <string name="nothing_to_clear">Nothing to clear</string>
     <string name="marks_cleared">All edits cleared</string>
 </resources>

@@ -11,25 +11,31 @@ Apache-2.0-licensed `pdfbox-android` library.
 ### Read
 - System `ACTION_OPEN_DOCUMENT` picker — no storage permission required
 - Page rendering with Android `PdfRenderer`
+- Continuous, vertically scrolling page strip with fling momentum — pages flow
+  like a document instead of swapping like slides
+- Pages are decoded on demand and recycled outside the visible window, so long
+  documents stay responsive
 - Immersive full-screen document view with hidden system bars
-- Single tap shows or hides the bottom tool tray; it starts hidden
+- Single tap reveals the top action bar and bottom tool tray; both start hidden
 - While zoomed in, single taps are ignored so signing and viewing are undisturbed;
-  the tray toggle is enabled again after zooming back out
+  the chrome toggle is enabled again after zooming back out
 - Double tap toggles zoom between fit-to-screen and 2.5x
 - Pinch in/out zooms around the gesture focus point; drag pans when zoomed
-- Animated previous/next navigation with a page indicator and disabled end states
+- Previous/next buttons smoothly scroll the continuous strip; the page indicator
+  follows the viewport and disables at the ends
 - Light and dark Material 3 theming
 
 ### Annotate and edit
-The edit tray contains exactly three tools:
+The centered edit tray contains exactly three tools:
 - **Pen** — freehand ink embedded into the output PDF
 - **Highlight** — translucent markup that snaps to detected text and renders as
   a straight band instead of a wobbly freehand stroke
 - **Sign** — freehand signature that renders live on every move, with no wait
   until the stroke is finished
 
-Tap the active tool again to return to view/pan mode. Undo and clear apply to the
-current edit session.
+Tap the active tool again to return to view/pan mode. The top action bar holds
+**Save**, **Clear**, and icon-only **Undo**/**Redo** buttons; undo and redo work
+as a real annotation history, including after Clear.
 
 ### Page tools and forms
 - Rotate, mark for deletion, and reorder the current page
@@ -45,10 +51,10 @@ goes wherever the user chooses (Downloads, Drive, etc.).
 
 - Gradient header with an original document-and-lens mark
 - Illustrated empty state in an elevated card
-- Document card with rounded page preview, filename, circular navigation buttons,
-  and a pill-shaped page indicator
-- Compact bottom tool tray with exactly three edit tools (Pen, Highlight, Sign)
-- Subtle fade-and-slide transition when changing pages
+- Two-row translucent top bar: filename and page pill above centered icon actions
+- Frosted dark tool tray centered at the bottom with three illustrated tools
+  (Pen, Highlight, Sign) and a highlighted selected state
+- Continuous page strip with readable gaps and a dark reading backdrop
 
 ## Build
 
@@ -77,9 +83,11 @@ $adb = 'C:\Users\Naveen\AppData\Local\Android\Sdk\platform-tools\adb.exe'
 & $adb shell am instrument -w -m com.example.doclens.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The suite also covers gesture behavior (double-tap zoom hides the tray, single
-tap is ignored while zoomed in and works again after zooming out), text-line
-indexing for highlight snapping, and live signature rendering before finger lift.
+The suite also covers continuous page layout, scroll-to-page viewport updates,
+top-chrome reveal, undo/redo history, gesture behavior (double-tap zoom hides the
+chrome, single tap is ignored while zoomed in and works again after zooming out),
+text-line indexing for highlight snapping, and live signature rendering before
+finger lift.
 
 The engine tests check point/rectangle round-trips for all four page rotations
 with a cropped MediaBox, tap-to-select line matching, visual patching with the
