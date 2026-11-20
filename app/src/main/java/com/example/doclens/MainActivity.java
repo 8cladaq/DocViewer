@@ -1,6 +1,9 @@
 package com.example.doclens;
 
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -14,6 +17,7 @@ import android.text.InputType;
 import android.view.View;
 import android.view.animation.AnimationUtils;
 import android.widget.EditText;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -23,8 +27,12 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.example.doclens.engine.AssetFontProvider;
+import com.example.doclens.engine.PdfOcrEngine;
+import com.example.doclens.engine.PdfOcrProgress;
+import com.example.doclens.engine.PdfOcrResult;
 import com.example.doclens.engine.PdfTextIndex;
 import com.example.doclens.engine.PdfTextLine;
+import com.example.doclens.engine.PdfTextWord;
 import com.example.doclens.engine.TextPatchEngine;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
@@ -44,6 +52,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** DocViewer — original PDF reading and editing, built on Android SDK + PDFBox-Android. */
 public class MainActivity extends AppCompatActivity {
@@ -51,6 +60,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_OPEN_PDF = 1001;
     private static final int REQUEST_SAVE_PDF = 1002;
     private static final int REQUEST_MERGE_PDF = 1003;
+    private static final int REQUEST_SAVE_OCR = 1004;
     private static final int MAX_TEXTURE_DIMENSION = 2048;
 
     private MaterialButtonToggleGroup toolsGroup;
@@ -64,6 +74,10 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButton redoButton;
     private MaterialButton clearButton;
     private MaterialButton saveButton;
+    private MaterialButton ocrButton;
+    private View ocrProgress;
+    private TextView ocrProgressText;
+    private MaterialButton ocrCancelButton;
     private View emptyState;
     private View landingView;
     private View documentView;
@@ -90,6 +104,10 @@ public class MainActivity extends AppCompatActivity {
     private final Deque<List<Annotation>> undoStack = new ArrayDeque<>();
     private final Deque<List<Annotation>> redoStack = new ArrayDeque<>();
     private final EditActions actions = new EditActions();
+    private final AtomicBoolean ocrCancelled = new AtomicBoolean(false);
+    private PdfOcrEngine ocrEngine;
+    private Thread ocrThread;
+    private byte[] pendingOcrBytes;
     private Integer pendingExportPage;
     private volatile int textLoadGeneration;
 
@@ -97,6 +115,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         PDFBoxResourceLoader.init(getApplicationContext());
+        ocrEngine = new PdfOcrEngine(this);
         setContentView(R.layout.activity_main);
 
         MaterialButton openButton = findViewById(R.id.open_button);
@@ -109,6 +128,10 @@ public class MainActivity extends AppCompatActivity {
         redoButton = findViewById(R.id.redo_button);
         clearButton = findViewById(R.id.clear_button);
         saveButton = findViewById(R.id.save_button);
+        ocrButton = findViewById(R.id.ocr_button);
+        ocrProgress = findViewById(R.id.ocr_progress);
+        ocrProgressText = findViewById(R.id.ocr_progress_text);
+        ocrCancelButton = findViewById(R.id.ocr_cancel_button);
         toolsGroup = findViewById(R.id.tools_group);
         pageLabel = findViewById(R.id.page_label);
         docTitle = findViewById(R.id.doc_title);
@@ -130,6 +153,8 @@ public class MainActivity extends AppCompatActivity {
         clearButton.setOnClickListener(v -> clearEdits());
         pagesButton.setOnClickListener(v -> showPagesDialog());
         saveButton.setOnClickListener(v -> openSavePicker());
+        ocrButton.setOnClickListener(v -> showOcrScopeDialog());
+        ocrCancelButton.setOnClickListener(v -> cancelOcr());
 
         pageView.setPageSource(new PdfPageView.PageSource() {
             @Override
@@ -185,6 +210,17 @@ public class MainActivity extends AppCompatActivity {
                 pageIndex = page;
                 updatePageControls();
             }
+
+            @Override
+            public void onTextSelected(int page, String text) {
+                copyText(text);
+            }
+
+            @Override
+            public void onTextSelectionUnavailable() {
+                Toast.makeText(MainActivity.this, R.string.no_selectable_text,
+                        Toast.LENGTH_SHORT).show();
+            }
         });
 
         toolsGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
@@ -204,6 +240,20 @@ public class MainActivity extends AppCompatActivity {
         if (id == R.id.tool_highlight) return PdfPageView.Tool.HIGHLIGHT;
         if (id == R.id.tool_sign) return PdfPageView.Tool.SIGNATURE;
         return PdfPageView.Tool.NONE;
+    }
+
+    private void copyText(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            Toast.makeText(this, R.string.no_selectable_text, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            Toast.makeText(this, R.string.copy_failed, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.app_name), text));
+        Toast.makeText(this, R.string.text_copied, Toast.LENGTH_SHORT).show();
     }
 
     private void openDocument() {
@@ -254,6 +304,8 @@ public class MainActivity extends AppCompatActivity {
             }
         } else if (requestCode == REQUEST_SAVE_PDF) {
             saveTo(uri);
+        } else if (requestCode == REQUEST_SAVE_OCR) {
+            saveOcrTo(uri);
         } else if (requestCode == REQUEST_MERGE_PDF) {
             try {
                 actions.mergeBytes = readBytes(uri);
@@ -423,14 +475,32 @@ public class MainActivity extends AppCompatActivity {
                         : index.getLinesByPage().entrySet()) {
                     float pageHeight = document.getPage(entry.getKey())
                             .getMediaBox().getHeight();
+                    int lineIndex = 0;
                     for (PdfTextLine line : entry.getValue()) {
                         RectF bounds = line.getPdfBounds();
+                        int wordLineIndex = lineIndex++;
+                        List<PdfPageView.WordBox> words = new ArrayList<>();
+                        for (PdfTextWord word : line.getWords()) {
+                            if (word.getText() == null || word.getText().trim().isEmpty()) {
+                                continue;
+                            }
+                            RectF wordBounds = word.getPdfBounds();
+                            words.add(new PdfPageView.WordBox(
+                                    word.getText(),
+                                    wordBounds.left,
+                                    pageHeight - wordBounds.top,
+                                    wordBounds.right,
+                                    pageHeight - wordBounds.bottom,
+                                    wordLineIndex));
+                        }
                         lines.add(new PdfPageView.TextLineBox(
                                 line.getPageIndex(),
                                 bounds.left,
                                 pageHeight - bounds.top,
                                 bounds.right,
-                                pageHeight - bounds.bottom));
+                                pageHeight - bounds.bottom,
+                                line.getText(),
+                                words));
                     }
                 }
             } catch (Exception ignored) {
@@ -440,6 +510,10 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     if (generation == textLoadGeneration) {
                         pageView.setTextLines(lines);
+                        if (!lines.isEmpty()) {
+                            Toast.makeText(MainActivity.this, R.string.selection_hint,
+                                    Toast.LENGTH_SHORT).show();
+                        }
                     }
                 });
             }
@@ -578,6 +652,7 @@ public class MainActivity extends AppCompatActivity {
         redoButton.setEnabled(hasDocument && !redoStack.isEmpty());
         clearButton.setEnabled(hasDocument && !annotations.isEmpty());
         saveButton.setEnabled(hasDocument);
+        ocrButton.setEnabled(hasDocument && (ocrThread == null || !ocrThread.isAlive()));
         updatePageControls();
     }
 
@@ -733,21 +808,136 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    @Override
-    protected void onDestroy() {
-        closeDocument();
-        super.onDestroy();
+    private void showOcrScopeDialog() {
+        if (sourceBytes == null) {
+            Toast.makeText(this, R.string.open_error, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] scopes = {
+                getString(R.string.ocr_current_page),
+                getString(R.string.ocr_all_pages),
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.ocr_choose_scope)
+                .setItems(scopes, (dialog, which) -> startOcr(which == 0))
+                .setNegativeButton(R.string.cancel, null)
+                .show();
     }
 
-    private void closeDocument() {
-        textLoadGeneration++;
+    private void startOcr(boolean currentPageOnly) {
+        if (ocrThread != null && ocrThread.isAlive()) {
+            return;
+        }
+        final byte[] input = sourceBytes;
+        if (input == null || ocrEngine == null) {
+            return;
+        }
+        final List<Integer> pages = currentPageOnly
+                ? java.util.Collections.singletonList(pageIndex) : null;
+        ocrCancelled.set(false);
+        ocrProgress.setVisibility(View.VISIBLE);
+        ocrProgressText.setText(getString(R.string.ocr_progress,
+                1, currentPageOnly ? 1 : pageCount));
+        updateActionStates();
+
+        ocrThread = new Thread(() -> {
+            try {
+                PdfOcrResult result = ocrEngine.recognize(input, pages, 250,
+                        progress -> {
+                            runOnUiThread(() -> ocrProgressText.setText(
+                                    getString(R.string.ocr_progress,
+                                            progress.getCompletedPages(), progress.getTotalPages())));
+                            return kotlin.Unit.INSTANCE;
+                        },
+                        () -> ocrCancelled.get() || Thread.currentThread().isInterrupted());
+                byte[] searchable = ocrEngine.buildSearchablePdf(input, result);
+                runOnUiThread(() -> {
+                    ocrThread = null;
+                    hideOcrProgress();
+                    updateActionStates();
+                    if (result.getWordCount() == 0) {
+                        Toast.makeText(this, R.string.ocr_no_text, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    pendingOcrBytes = searchable;
+                    try {
+                        applyOcrBytes(searchable);
+                        Toast.makeText(this,
+                                getString(R.string.ocr_complete, result.getWordCount()),
+                                Toast.LENGTH_SHORT).show();
+                        showOcrResultDialog(result);
+                    } catch (Exception e) {
+                        Toast.makeText(this, R.string.ocr_failed, Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    ocrThread = null;
+                    hideOcrProgress();
+                    updateActionStates();
+                    Toast.makeText(this,
+                            ocrCancelled.get() ? R.string.ocr_cancelled : R.string.ocr_failed,
+                            Toast.LENGTH_SHORT).show();
+                });
+            }
+        }, "docviewer-ocr");
+        ocrThread.start();
+    }
+
+    /** Reloads renderer state from OCR output while keeping annotations and history. */
+    private void applyOcrBytes(byte[] bytes) throws Exception {
+        int savedPage = pageCount == 0 ? 0 : Math.max(0, Math.min(pageCount - 1, pageIndex));
+        closeRendererForReload();
+
+        sourceBytes = bytes;
+        File file = new File(getCacheDir(), "current.pdf");
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(bytes);
+        }
+        fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+        synchronized (rendererLock) {
+            renderer = new PdfRenderer(fileDescriptor);
+            pageCount = renderer.getPageCount();
+            if (pageCount == 0) {
+                throw new IllegalStateException("The PDF has no pages");
+            }
+            PdfRenderer.Page first = renderer.openPage(0);
+            try {
+                pdfWidth = first.getWidth();
+                pdfHeight = first.getHeight();
+            } finally {
+                first.close();
+            }
+        }
+        float textureScale = Math.min(1f,
+                (float) MAX_TEXTURE_DIMENSION / Math.max(pdfWidth, pdfHeight));
+        bitmapWidth = Math.max(1, Math.round(pdfWidth * textureScale));
+        bitmapHeight = Math.max(1, Math.round(pdfHeight * textureScale));
+        renderExecutor = Executors.newSingleThreadExecutor(runnable ->
+                new Thread(runnable, "docviewer-page-render"));
+        synchronized (pendingPages) {
+            pendingPages.clear();
+        }
+
+        pageIndex = Math.min(savedPage, pageCount - 1);
+        pageView.setDocument(pageCount, pdfWidth, pdfHeight,
+                bitmapWidth, bitmapHeight, annotations);
+        pageView.scrollToPage(pageIndex);
+        pageLabel.setText(getString(R.string.page_info, pageIndex + 1, pageCount));
+        updatePageControls();
+        updateActionStates();
+        requestPageBitmap(pageIndex);
+        pageView.setTextLines(new ArrayList<>());
+        loadTextLines(bytes);
+    }
+
+    private void closeRendererForReload() {
         renderGeneration++;
         ExecutorService executor = renderExecutor;
         renderExecutor = null;
         if (executor != null) {
             executor.shutdownNow();
         }
-
         synchronized (rendererLock) {
             if (renderer != null) {
                 try {
@@ -766,10 +956,91 @@ public class MainActivity extends AppCompatActivity {
                 fileDescriptor = null;
             }
         }
-
         synchronized (pendingPages) {
             pendingPages.clear();
         }
+    }
+
+    private void showOcrResultDialog(PdfOcrResult result) {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.ocr)
+                .setMessage(getString(R.string.ocr_complete, result.getWordCount()))
+                .setPositiveButton(R.string.ocr_copy_text,
+                        (dialog, which) -> copyText(result.getFullText()))
+                .setNeutralButton(R.string.ocr_save_pdf,
+                        (dialog, which) -> openOcrSavePicker())
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void openOcrSavePicker() {
+        if (pendingOcrBytes == null) {
+            Toast.makeText(this, R.string.ocr_failed, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.setType("application/pdf");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.putExtra(Intent.EXTRA_TITLE, "DocViewer-searchable.pdf");
+        startActivityForResult(intent, REQUEST_SAVE_OCR);
+    }
+
+    private void saveOcrTo(Uri uri) {
+        final byte[] bytes = pendingOcrBytes;
+        if (bytes == null || ocrEngine == null) {
+            Toast.makeText(this, R.string.ocr_failed, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, R.string.ocr_saving, Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                ocrEngine.saveToUri(bytes, uri, getContentResolver());
+                runOnUiThread(() -> {
+                    try {
+                        applyOcrBytes(bytes);
+                    } catch (Exception ignored) {
+                        // The document is already updated in memory; reload is best-effort.
+                    }
+                    Toast.makeText(this, R.string.ocr_saved, Toast.LENGTH_SHORT).show();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this, R.string.ocr_failed,
+                        Toast.LENGTH_LONG).show());
+            }
+        }, "docviewer-ocr-save").start();
+    }
+
+    private void hideOcrProgress() {
+        ocrProgress.setVisibility(View.GONE);
+    }
+
+    private void cancelOcr() {
+        ocrCancelled.set(true);
+        Thread thread = ocrThread;
+        if (thread != null) {
+            thread.interrupt();
+        }
+        hideOcrProgress();
+        updateActionStates();
+        if (thread != null && thread.isAlive()) {
+            Toast.makeText(this, R.string.ocr_cancelled, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        cancelOcr();
+        closeDocument();
+        if (ocrEngine != null) {
+            ocrEngine.close();
+            ocrEngine = null;
+        }
+        super.onDestroy();
+    }
+
+    private void closeDocument() {
+        textLoadGeneration++;
+        closeRendererForReload();
         pageView.clear();
         annotations.clear();
         actions.clear();

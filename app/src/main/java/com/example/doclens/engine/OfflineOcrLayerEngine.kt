@@ -30,7 +30,7 @@ import kotlin.math.sqrt
 /** Controls rasterization and page selection for the offline OCR layer. */
 data class OcrLayerOptions(
     /** Target render resolution. ML Kit needs roughly 200-300 DPI for printed pages. */
-    val dpi: Int = 260,
+    val dpi: Int = 250,
     /** Null means every page. Indexes are sorted and de-duplicated. */
     val pageIndices: List<Int>? = null,
 ) {
@@ -120,6 +120,11 @@ class OfflineOcrLayerEngine(context: Context) {
         options: OcrLayerOptions = OcrLayerOptions(),
     ): EditCommand {
         val pages = recognize(pdfBytes, options)
+        return createLayerCommandFromResults(pages)
+    }
+
+    /** Reuses previously recognized words without running ML Kit a second time. */
+    fun createLayerCommandFromResults(pages: List<OcrPageResult>): EditCommand {
         val wordCount = pages.sumOf { it.wordCount }
         return EditCommand("Add searchable OCR layer ($wordCount words)") { document ->
             writeInvisibleText(document, pages)

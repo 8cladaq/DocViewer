@@ -49,6 +49,31 @@ class ContinuousScrollTest {
         up.recycle()
     }
 
+    private fun drag(view: PdfPageView, fromX: Float, toX: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, fromX, y, 0)
+        view.dispatchTouchEvent(down)
+        down.recycle()
+        for (step in 1..8) {
+            val x = fromX + (toX - fromX) * step / 8f
+            val move = MotionEvent.obtain(now, now + step * 16L,
+                MotionEvent.ACTION_MOVE, x, y, 0)
+            view.dispatchTouchEvent(move)
+            move.recycle()
+        }
+        val up = MotionEvent.obtain(now, now + 150L, MotionEvent.ACTION_UP, toX, y, 0)
+        view.dispatchTouchEvent(up)
+        up.recycle()
+    }
+
+    private fun zoomTo(view: PdfPageView, level: Float) {
+        val method: Method = PdfPageView::class.java.getDeclaredMethod(
+            "setZoom", Float::class.javaPrimitiveType,
+            Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+        method.isAccessible = true
+        method.invoke(view, level, 800f, 1200f)
+    }
+
     @Test
     fun pagesFormOneContinuousStrip() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -63,10 +88,17 @@ class ContinuousScrollTest {
 
                 val first = pageRect(view, 0)
                 val second = pageRect(view, 1)
+                assertEquals("first page must start at the top edge", 0f, first.top, 0.01f)
                 assertTrue("page 2 must be laid out below page 1",
                     second.top >= first.bottom)
                 assertEquals("pages must share one horizontal alignment",
                     first.left, second.left, 0.01f)
+
+                val gapMethod: Method = PdfPageView::class.java.getDeclaredMethod("gapPx")
+                gapMethod.isAccessible = true
+                val gap = gapMethod.invoke(view) as Float
+                assertTrue("page gap must stay slim, got ${gap}px",
+                    gap <= 8f * view.resources.displayMetrics.density)
             }
         }
     }
@@ -115,6 +147,24 @@ class ContinuousScrollTest {
                     activity.findViewById<View>(R.id.tools_panel).visibility)
                 assertTrue("redo must be present in the top bar",
                     activity.findViewById<View>(R.id.redo_button) != null)
+            }
+        }
+    }
+
+    @Test
+    fun zoomedPageCanBePannedHorizontally() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { openDocument(it) }
+            Thread.sleep(700)
+
+            scenario.onActivity { activity ->
+                val view: PdfPageView = activity.findViewById(R.id.page_image)
+                zoomTo(view, 2.5f)
+                val before = field(view, "panX") as Float
+                drag(view, 850f, 350f, 1200f)
+                val after = field(view, "panX") as Float
+                assertTrue("horizontal drag must pan the zoomed page: $before -> $after",
+                    after < before - 100f)
             }
         }
     }

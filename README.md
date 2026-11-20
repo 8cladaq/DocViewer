@@ -21,6 +21,8 @@ Apache-2.0-licensed `pdfbox-android` library.
   the chrome toggle is enabled again after zooming back out
 - Double tap toggles zoom between fit-to-screen and 2.5x
 - Pinch in/out zooms around the gesture focus point; drag pans when zoomed
+- Long-press text to select a word, drag to extend the selection, and release to
+  copy it to the clipboard — even while zoomed
 - Previous/next buttons smoothly scroll the continuous strip; the page indicator
   follows the viewport and disables at the ends
 - Light and dark Material 3 theming
@@ -43,6 +45,15 @@ as a real annotation history, including after Clear.
 - Export the current page as a standalone PDF
 - Fill text fields in fillable PDF forms
 
+### OCR and searchable text
+- **OCR** action in the top bar chooses **Current Page** or **All Pages**
+- Non-blocking progress stays visible while recognition runs; the page remains
+  readable and the operation can be cancelled
+- Recognition runs fully offline with bundled ML Kit, renders pages at 250 DPI
+  with Android `PdfRenderer`, and writes invisible selectable text into the PDF
+- After OCR, copy the extracted text or save the searchable PDF through the
+  system document picker; the viewer reloads the updated document immediately
+
 All edits are staged in memory and applied together when **Save** is chosen.
 The app writes the result through `ACTION_CREATE_DOCUMENT`, so the edited PDF
 goes wherever the user chooses (Downloads, Drive, etc.).
@@ -51,7 +62,8 @@ goes wherever the user chooses (Downloads, Drive, etc.).
 
 - Gradient header with an original document-and-lens mark
 - Illustrated empty state in an elevated card
-- Two-row translucent top bar: filename and page pill above centered icon actions
+- Two-row translucent top bar: filename and page pill above centered icon actions,
+  including the OCR action and a compact cancelable progress pill
 - Frosted dark tool tray centered at the bottom with three illustrated tools
   (Pen, Highlight, Sign) and a highlighted selected state
 - Continuous page strip with readable gaps and a dark reading backdrop
@@ -86,8 +98,8 @@ $adb = 'C:\Users\Naveen\AppData\Local\Android\Sdk\platform-tools\adb.exe'
 The suite also covers continuous page layout, scroll-to-page viewport updates,
 top-chrome reveal, undo/redo history, gesture behavior (double-tap zoom hides the
 chrome, single tap is ignored while zoomed in and works again after zooming out),
-text-line indexing for highlight snapping, and live signature rendering before
-finger lift.
+text-line indexing for highlight snapping, long-press text selection and clipboard
+copy, multi-chunk selections, and live signature rendering before finger lift.
 
 The engine tests check point/rectangle round-trips for all four page rotations
 with a cropped MediaBox, tap-to-select line matching, visual patching with the
@@ -131,14 +143,17 @@ The `com.example.doclens.engine` package contains the editor core:
   by `Do`, applying the form matrix to nested text positions. `sanitizeMetadata`
   replaces `PDDocumentInformation` with an empty instance and clears catalog XMP.
 - `OfflineOcrLayerEngine` — renders each selected page to a high-DPI bitmap with
-  Android `PdfRenderer` (260 DPI by default), runs ML Kit's **bundled** Latin text
+  Android `PdfRenderer` (250 DPI by default), runs ML Kit's **bundled** Latin text
   recognizer entirely on-device, maps every word-level pixel box back to
   absolute PDF points through `PdfCoordinateMapper`, and appends invisible text
   with `RenderingMode.NEITHER`. Per-word `Tz` horizontal scaling makes the
   invisible text advance match the recognized box width, so scanned pages become
   searchable and copy-pasteable in PDF viewers. The embedded Roboto font supplies
-  a ToUnicode map for reliable text extraction. It is currently an engine-level
-  suspend API; the Java viewer layer remains the UI/viewing boundary.
+  a ToUnicode map for reliable text extraction.
+- `PdfOcrEngine` — viewer-facing wrapper that resolves Current Page / All Pages,
+  reports per-page progress, honours cancellation, composes extracted text,
+  embeds a searchable layer on `Dispatchers.IO`, and atomically writes the saved
+  PDF through a temp file in `cacheDir` before streaming it to the chosen URI.
 
 `TextPatchEngine` scans direct page content streams and standard text operators;
 text nested inside Form XObjects is not traversed by that engine.

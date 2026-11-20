@@ -18,6 +18,8 @@ import android.view.View;
 import android.widget.Scroller;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -41,6 +43,10 @@ public class PdfPageView extends View {
         void onZoomChanged(boolean zoomedIn);
 
         void onPageChanged(int pageIndex);
+
+        void onTextSelected(int pageIndex, String text);
+
+        void onTextSelectionUnavailable();
     }
 
     /** Supplies page bitmaps on demand so the whole document is never in memory. */
@@ -52,20 +58,53 @@ public class PdfPageView extends View {
         void requestPage(int index);
     }
 
-    /** A text line converted to top-left page coordinates for highlight snapping. */
+    /** One word with exact top-left PDF point bounds, used for precise copying. */
+    public static final class WordBox {
+        public final String text;
+        public final float left;
+        public final float top;
+        public final float right;
+        public final float bottom;
+        public final int lineIndex;
+
+        public WordBox(String text, float left, float top, float right, float bottom) {
+            this(text, left, top, right, bottom, -1);
+        }
+
+        public WordBox(String text, float left, float top, float right, float bottom,
+                       int lineIndex) {
+            this.text = text == null ? "" : text;
+            this.left = left;
+            this.top = top;
+            this.right = right;
+            this.bottom = bottom;
+            this.lineIndex = lineIndex;
+        }
+    }
+
+    /** A text line converted to top-left page coordinates for highlights and copying. */
     public static final class TextLineBox {
         public final int pageIndex;
         public final float left;
         public final float top;
         public final float right;
         public final float bottom;
+        public final String text;
+        public final List<WordBox> words;
 
         public TextLineBox(int pageIndex, float left, float top, float right, float bottom) {
+            this(pageIndex, left, top, right, bottom, "", new ArrayList<>());
+        }
+
+        public TextLineBox(int pageIndex, float left, float top, float right, float bottom,
+                           String text, List<WordBox> words) {
             this.pageIndex = pageIndex;
             this.left = left;
             this.top = top;
             this.right = right;
             this.bottom = bottom;
+            this.text = text == null ? "" : text;
+            this.words = words == null ? new ArrayList<>() : words;
         }
     }
 
@@ -88,6 +127,12 @@ public class PdfPageView extends View {
     private Annotation active;
     private boolean chromeVisible;
     private boolean zoomedIn;
+    private boolean selectionMode;
+    private RectF selectionRect;
+    private int selectionPage;
+    private final List<WordBox> selectionWords = new ArrayList<>();
+    private int selectionStartIndex = -1;
+    private int selectionEndIndex = -1;
     private List<TextLineBox> textLines = new ArrayList<>();
 
     private float zoom = 1f;
@@ -100,6 +145,7 @@ public class PdfPageView extends View {
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint placeholderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint dividerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint selectionPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private ScaleGestureDetector scaleDetector;
     private GestureDetector gestureDetector;
@@ -126,6 +172,7 @@ public class PdfPageView extends View {
         dividerPaint.setColor(Color.rgb(55, 65, 81));
         dividerPaint.setStyle(Paint.Style.STROKE);
         dividerPaint.setStrokeWidth(1f);
+        selectionPaint.setColor(Color.rgb(37, 99, 235));
         setClickable(true);
 
         scroller = new Scroller(getContext());
@@ -162,6 +209,9 @@ public class PdfPageView extends View {
 
                     @Override
                     public boolean onSingleTapConfirmed(MotionEvent e) {
+                        if (selectionMode) {
+                            return true;
+                        }
                         if (listener == null || pageCount == 0) {
                             return true;
                         }
@@ -180,6 +230,9 @@ public class PdfPageView extends View {
 
                     @Override
                     public boolean onDoubleTap(MotionEvent e) {
+                        if (selectionMode) {
+                            return true;
+                        }
                         active = null;
                         scroller.forceFinished(true);
                         if (zoom > 1.01f) {
@@ -192,13 +245,24 @@ public class PdfPageView extends View {
                     }
 
                     @Override
+                    public void onLongPress(MotionEvent e) {
+                        if (selectionMode || scaleDetector.isInProgress()
+                                || tool != Tool.NONE || listener == null) {
+                            return;
+                        }
+                        beginSelection(e.getX(), e.getY());
+                    }
+
+                    @Override
                     public boolean onScroll(MotionEvent e1, MotionEvent e2,
                                             float distanceX, float distanceY) {
-                        if (tool != Tool.NONE || scaleDetector.isInProgress()) {
+                        if (selectionMode || tool != Tool.NONE || scaleDetector.isInProgress()) {
                             return false;
                         }
                         scroller.forceFinished(true);
+                        panX -= distanceX;
                         scrollY += distanceY;
+                        clampPan();
                         clampScroll();
                         invalidate();
                         return true;
@@ -207,11 +271,17 @@ public class PdfPageView extends View {
                     @Override
                     public boolean onFling(MotionEvent e1, MotionEvent e2,
                                            float velocityX, float velocityY) {
-                        if (tool != Tool.NONE || scaleDetector.isInProgress()) {
+                        if (selectionMode || tool != Tool.NONE || scaleDetector.isInProgress()) {
                             return false;
                         }
-                        scroller.fling(0, Math.round(scrollY), 0, Math.round(-velocityY),
-                                0, 0, 0, Math.round(contentHeight()));
+                        float panLimit = Math.max(0f,
+                                (pageWidth() * zoom - getWidth()) / 2f);
+                        float scrollLimit = Math.max(0f,
+                                contentHeight() - getHeight() / Math.max(0.01f, zoom));
+                        scroller.fling(Math.round(panX), Math.round(scrollY),
+                                Math.round(velocityX), Math.round(-velocityY),
+                                Math.round(-panLimit), Math.round(panLimit),
+                                0, Math.round(scrollLimit));
                         invalidate();
                         return true;
                     }
@@ -271,9 +341,189 @@ public class PdfPageView extends View {
     }
 
     public void setTool(Tool tool) {
+        clearSelection();
         this.tool = tool;
         active = null;
         invalidate();
+    }
+
+    /** Enables drag-to-copy text selection without adding a fourth edit tool. */
+    public void setSelectionMode(boolean enabled) {
+        selectionMode = enabled;
+        if (enabled) {
+            tool = Tool.NONE;
+        }
+        if (!enabled) {
+            clearSelection();
+        }
+        active = null;
+        scroller.forceFinished(true);
+        invalidate();
+    }
+
+    public boolean isSelectionMode() {
+        return selectionMode;
+    }
+
+    private void clearSelection() {
+        selectionMode = false;
+        selectionRect = null;
+        selectionWords.clear();
+        selectionStartIndex = -1;
+        selectionEndIndex = -1;
+    }
+
+    /** Starts a word selection from a long press and returns true when text was hit. */
+    private boolean beginSelection(float x, float y) {
+        int page = pageIndexAtY(y);
+        float[] point = viewToPdf(x, y, page);
+        selectionWords.clear();
+        for (TextLineBox line : textLines) {
+            if (line.pageIndex == page) {
+                selectionWords.addAll(line.words);
+            }
+        }
+        if (selectionWords.isEmpty()) {
+            notifySelectionUnavailable();
+            return false;
+        }
+        Collections.sort(selectionWords, (a, b) -> {
+            if (a.lineIndex != b.lineIndex) {
+                return Integer.compare(a.lineIndex, b.lineIndex);
+            }
+            if (Math.abs(a.top - b.top) > 2f) {
+                return Float.compare(a.top, b.top);
+            }
+            return Float.compare(a.left, b.left);
+        });
+        int hit = nearestWordIndex(selectionWords, point[0], point[1], 8f);
+        if (hit < 0) {
+            notifySelectionUnavailable();
+            return false;
+        }
+        selectionPage = page;
+        selectionStartIndex = hit;
+        selectionEndIndex = hit;
+        selectionMode = true;
+        updateSelectionRect();
+        invalidate();
+        return true;
+    }
+
+    /** Extends the active selection to the word nearest the drag point. */
+    private void updateSelection(float x, float y) {
+        if (selectionStartIndex < 0 || pageIndexAtY(y) != selectionPage) {
+            return;
+        }
+        float[] point = viewToPdf(x, y, selectionPage);
+        int hit = nearestWordIndex(selectionWords, point[0], point[1], 14f);
+        if (hit < 0 || hit == selectionEndIndex) {
+            return;
+        }
+        selectionEndIndex = hit;
+        updateSelectionRect();
+        invalidate();
+    }
+
+    private static int nearestWordIndex(List<WordBox> words, float x, float y, float tolerance) {
+        int best = -1;
+        float bestDistance = Float.MAX_VALUE;
+        for (int i = 0; i < words.size(); i++) {
+            WordBox word = words.get(i);
+            if (word.text.trim().isEmpty()) {
+                continue;
+            }
+            float dx = Math.max(Math.max(word.left - x, x - word.right), 0f);
+            float dy = Math.max(Math.max(word.top - y, y - word.bottom), 0f);
+            float distance = dx * dx + dy * dy;
+            if (distance <= tolerance * tolerance && distance < bestDistance) {
+                best = i;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private void updateSelectionRect() {
+        if (selectionStartIndex < 0 || selectionEndIndex < 0
+                || selectionWords.isEmpty()) {
+            selectionRect = null;
+            return;
+        }
+        int from = Math.min(selectionStartIndex, selectionEndIndex);
+        int to = Math.max(selectionStartIndex, selectionEndIndex);
+        RectF rect = null;
+        for (int i = from; i <= to; i++) {
+            WordBox word = selectionWords.get(i);
+            if (rect == null) {
+                rect = new RectF(word.left, word.top, word.right, word.bottom);
+            } else {
+                rect.union(word.left, word.top, word.right, word.bottom);
+            }
+        }
+        selectionRect = rect;
+    }
+
+    private String selectedText() {
+        if (selectionStartIndex < 0 || selectionEndIndex < 0
+                || selectionWords.isEmpty()) {
+            return "";
+        }
+        int from = Math.min(selectionStartIndex, selectionEndIndex);
+        int to = Math.max(selectionStartIndex, selectionEndIndex);
+        StringBuilder text = new StringBuilder();
+        int previousLine = Integer.MIN_VALUE;
+        for (int i = from; i <= to; i++) {
+            WordBox word = selectionWords.get(i);
+            String token = word.text.trim();
+            if (token.isEmpty()) {
+                continue;
+            }
+            if (text.length() > 0) {
+                if (word.lineIndex != previousLine) {
+                    text.append('\n');
+                } else if (!Character.isWhitespace(text.charAt(text.length() - 1))
+                        && !Character.isWhitespace(token.charAt(0))) {
+                    text.append(' ');
+                }
+            }
+            text.append(token);
+            previousLine = word.lineIndex;
+        }
+        return text.toString();
+    }
+
+    private void commitSelection() {
+        int page = selectionPage;
+        String text = selectedText();
+        clearSelection();
+        invalidate();
+        if (listener != null) {
+            listener.onTextSelected(page, text);
+        }
+    }
+
+    private void notifySelectionUnavailable() {
+        if (listener != null) {
+            listener.onTextSelectionUnavailable();
+        }
+    }
+
+    private void drawSelection(Canvas canvas, float scale) {
+        if (selectionRect == null) {
+            return;
+        }
+        float left = selectionRect.left * scale;
+        float top = selectionRect.top * scale;
+        float right = selectionRect.right * scale;
+        float bottom = selectionRect.bottom * scale;
+        selectionPaint.setStyle(Paint.Style.FILL);
+        selectionPaint.setColor(Color.argb(70, 37, 99, 235));
+        canvas.drawRect(left, top, right, bottom, selectionPaint);
+        selectionPaint.setStyle(Paint.Style.STROKE);
+        selectionPaint.setColor(Color.rgb(37, 99, 235));
+        selectionPaint.setStrokeWidth(Math.max(1f, 1.2f * scale));
+        canvas.drawRect(left, top, right, bottom, selectionPaint);
     }
 
     public void setChromeVisible(boolean chromeVisible) {
@@ -281,6 +531,7 @@ public class PdfPageView extends View {
     }
 
     public void setTextLines(List<TextLineBox> textLines) {
+        clearSelection();
         this.textLines = textLines == null ? new ArrayList<>() : textLines;
         invalidate();
     }
@@ -296,7 +547,7 @@ public class PdfPageView extends View {
         int target = Math.max(0, Math.min(pageCount - 1, index));
         scroller.forceFinished(true);
         float destination = pageContentTop(target);
-        scroller.startScroll(0, Math.round(scrollY), 0,
+        scroller.startScroll(Math.round(panX), Math.round(scrollY), 0,
                 Math.round(destination - scrollY), 420);
         invalidate();
     }
@@ -304,7 +555,9 @@ public class PdfPageView extends View {
     @Override
     public void computeScroll() {
         if (scroller.computeScrollOffset()) {
+            panX = scroller.getCurrX();
             scrollY = scroller.getCurrY();
+            clampPan();
             clampScroll();
             invalidate();
         }
@@ -317,6 +570,7 @@ public class PdfPageView extends View {
         panX = 0f;
         scrollY = 0f;
         active = null;
+        clearSelection();
         scroller.forceFinished(true);
         if (wasZoomedIn && listener != null) {
             listener.onZoomChanged(false);
@@ -325,7 +579,7 @@ public class PdfPageView extends View {
     }
 
     private float gapPx() {
-        return 22f * getResources().getDisplayMetrics().density;
+        return 5f * getResources().getDisplayMetrics().density;
     }
 
     private float baseScale() {
@@ -344,8 +598,9 @@ public class PdfPageView extends View {
         return bitmapHeight * baseScale();
     }
 
+    /** Pages start at the top edge; leftover space continues into the next page. */
     private float topPadding() {
-        return Math.max(0f, (getHeight() - pageHeight()) / 2f);
+        return 0f;
     }
 
     private float contentHeight() {
@@ -482,6 +737,9 @@ public class PdfPageView extends View {
             }
             if (active != null && active.pageIndex == i) {
                 drawAnnotation(canvas, active, scale);
+            }
+            if (selectionRect != null && selectionPage == i) {
+                drawSelection(canvas, scale);
             }
             canvas.restore();
         }
@@ -667,6 +925,25 @@ public class PdfPageView extends View {
 
         if (scaleDetector.isInProgress() || event.getPointerCount() > 1) {
             active = null;
+            return true;
+        }
+
+        if (selectionMode) {
+            if (action == MotionEvent.ACTION_MOVE) {
+                updateSelection(event.getX(), event.getY());
+            } else if (action == MotionEvent.ACTION_UP) {
+                commitSelection();
+            } else if (action == MotionEvent.ACTION_CANCEL) {
+                clearSelection();
+                invalidate();
+            }
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                getParent().requestDisallowInterceptTouchEvent(false);
+                if (velocityTracker != null) {
+                    velocityTracker.recycle();
+                    velocityTracker = null;
+                }
+            }
             return true;
         }
 

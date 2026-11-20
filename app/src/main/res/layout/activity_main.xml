@@ -341,7 +341,70 @@
                     app:cornerRadius="19dp"
                     app:icon="@drawable/ic_file"
                     app:iconTint="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/ocr_button"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="48dp"
+                    android:layout_height="38dp"
+                    android:contentDescription="@string/ocr"
+                    android:text="@string/ocr"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    app:backgroundTint="#33FFFFFF"
+                    app:cornerRadius="19dp" />
             </LinearLayout>
+        </LinearLayout>
+
+        <!-- Non-blocking OCR status; the page stays readable while recognition runs -->
+        <LinearLayout
+            android:id="@+id/ocr_progress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="160dp"
+            android:background="@drawable/top_pill_background"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="14dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="10dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:id="@+id/ocr_progress_bar"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:indeterminate="true" />
+
+            <TextView
+                android:id="@+id/ocr_progress_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/ocr_progress"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ocr_cancel_button"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="6dp"
+                android:minWidth="0dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/cancel"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
         </LinearLayout>
     </FrameLayout>
 
